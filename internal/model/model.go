@@ -1,0 +1,48 @@
+// Package model holds types shared across the data-plane services. The wire
+// shapes here mirror the versioned JSON Schemas in /api — keep them in sync.
+package model
+
+import "time"
+
+// Status values for a message (mirrors the messages.status CHECK in migrations).
+const (
+	StatusQueued   = "queued"
+	StatusRelayed  = "relayed"
+	StatusDeferred = "deferred"
+	StatusBounced  = "bounced"
+	StatusFailed   = "failed"
+)
+
+// BodyRef points at the stored RFC822 body. Backend is "fs" (shared file store)
+// or "pg" (Postgres bytea fallback).
+type BodyRef struct {
+	Backend string `json:"backend"`
+	Key     string `json:"key"`
+}
+
+// Envelope is the SMTP envelope.
+type Envelope struct {
+	MailFrom string   `json:"mailFrom"`
+	RcptTo   []string `json:"rcptTo"`
+}
+
+// RoutingHints are cheap hints carried on the job so the worker can route
+// without re-parsing the body.
+type RoutingHints struct {
+	RecipientDomain string `json:"recipientDomain,omitempty"`
+	SenderDomain    string `json:"senderDomain,omitempty"`
+}
+
+// RelayJob is published by ingress to relay.work. Mirrors api/relay-job.schema.json.
+type RelayJob struct {
+	V            int          `json:"v"`
+	MessageID    string       `json:"messageId"`
+	BodyRef      BodyRef      `json:"bodyRef"`
+	Envelope     Envelope     `json:"envelope"`
+	RoutingHints RoutingHints `json:"routingHints,omitempty"`
+	Attempt      int          `json:"attempt"`
+	EnqueuedAt   time.Time    `json:"enqueuedAt"`
+}
+
+// RelayJobVersion is the current schema version.
+const RelayJobVersion = 1

@@ -1,6 +1,7 @@
 novamail {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
 
-Image:      {{ include "novamail.image" . }}
+Ingress:    {{ include "novamail.ingressImage" . }}
+Delivery:   {{ include "novamail.deliveryImage" . }}
 {{- if .Values.ingress.enabled }}
 HTTP:       https://{{ .Values.ingress.host }}/healthz   (liveness)
             https://{{ .Values.ingress.host }}/metrics    (Prometheus)

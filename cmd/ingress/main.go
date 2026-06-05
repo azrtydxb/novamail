@@ -1,9 +1,9 @@
 // Command ingress is the SMTP submission front door of the relay.
 //
-// M0 walking skeleton: it accepts submissions on the SMTP listener, writes the
-// raw body to the shared file store, and exposes health + Prometheus endpoints.
-// SMTP AUTH/TLS, inbound authorization, Postgres metadata, and publishing to
-// RabbitMQ land in M1 (see TODO.md).
+// It accepts submissions on the SMTP listener, writes the raw body to the
+// shared file store, records message metadata in Postgres, and publishes a
+// relay job to RabbitMQ. SMTP AUTH/TLS and inbound authorization are layered on
+// next (see TODO.md).
 package main
 
 import (
@@ -24,6 +24,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/azrtydxb/novamail/internal/amqp"
+	"github.com/azrtydxb/novamail/internal/db"
 	"github.com/azrtydxb/novamail/internal/store"
 )
 
@@ -33,6 +35,8 @@ type config struct {
 	smtpAddr  string
 	httpAddr  string
 	bodyStore string
+	dsn       string
+	amqpURL   string
 }
 
 func loadConfig() config {
@@ -40,6 +44,8 @@ func loadConfig() config {
 		smtpAddr:  env("NOVAMAIL_SMTP_ADDR", ":2525"),
 		httpAddr:  env("NOVAMAIL_HTTP_ADDR", ":8080"),
 		bodyStore: env("NOVAMAIL_BODY_STORE", "/var/lib/novamail/bodies"),
+		dsn:       os.Getenv("DSN"),
+		amqpURL:   os.Getenv("AMQP_URL"),
 	}
 }
 
@@ -71,7 +77,24 @@ func main() {
 		os.Exit(1)
 	}
 
-	be := &backend{store: bodies, log: logger}
+	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer initCancel()
+
+	database, err := db.Open(initCtx, cfg.dsn)
+	if err != nil {
+		logger.Error("init postgres", "err", err)
+		os.Exit(1)
+	}
+	defer database.Close()
+
+	bus, err := amqp.Dial(cfg.amqpURL)
+	if err != nil {
+		logger.Error("init rabbitmq", "err", err)
+		os.Exit(1)
+	}
+	defer func() { _ = bus.Close() }()
+
+	be := &backend{store: bodies, db: database, bus: bus, log: logger}
 	smtpSrv := smtp.NewServer(be)
 	smtpSrv.Addr = cfg.smtpAddr
 	smtpSrv.Domain = env("NOVAMAIL_HOSTNAME", "novamail.local")
@@ -81,7 +104,7 @@ func main() {
 	smtpSrv.AllowInsecureAuth = true   // M0 only; TLS + AUTH enforced in M1
 
 	ready := &atomicBool{}
-	httpSrv := &http.Server{Addr: cfg.httpAddr, Handler: healthMux(ready)}
+	httpSrv := &http.Server{Addr: cfg.httpAddr, Handler: healthMux(ready, database, bus)}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -112,18 +135,27 @@ func main() {
 	_ = httpSrv.Shutdown(shutCtx)
 }
 
-func healthMux(ready *atomicBool) http.Handler {
+func healthMux(ready *atomicBool, database *db.DB, bus *amqp.Conn) http.Handler {
 	mux := http.NewServeMux()
 	// Liveness: process is up.
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
 	})
-	// Readiness: serving traffic. (M1 will also check Postgres/RabbitMQ.)
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
+	// Readiness: serving traffic AND dependencies reachable.
+	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
+		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+		defer cancel()
 		if !ready.get() {
-			w.WriteHeader(http.StatusServiceUnavailable)
-			_, _ = io.WriteString(w, "not ready")
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		if err := database.Ping(ctx); err != nil {
+			http.Error(w, "postgres unreachable", http.StatusServiceUnavailable)
+			return
+		}
+		if err := bus.Ping(); err != nil {
+			http.Error(w, "rabbitmq unreachable", http.StatusServiceUnavailable)
 			return
 		}
 		w.WriteHeader(http.StatusOK)

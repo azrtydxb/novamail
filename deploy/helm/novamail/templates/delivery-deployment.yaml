@@ -1,19 +1,19 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: {{ include "novamail.fullname" . }}-ingress
+  name: {{ include "novamail.fullname" . }}-delivery
   labels:
     {{- include "novamail.labels" . | nindent 4 }}
-    app.kubernetes.io/component: ingress
+    app.kubernetes.io/component: delivery
 spec:
-  replicas: {{ .Values.ingressApp.replicas }}
+  replicas: {{ .Values.delivery.replicas }}
   selector:
     matchLabels:
-      {{- include "novamail.ingress.selectorLabels" . | nindent 6 }}
+      {{- include "novamail.delivery.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
-        {{- include "novamail.ingress.selectorLabels" . | nindent 8 }}
+        {{- include "novamail.delivery.selectorLabels" . | nindent 8 }}
     spec:
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
@@ -22,37 +22,37 @@ spec:
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
-        - name: ingress
-          image: {{ include "novamail.ingressImage" . }}
+        - name: delivery
+          image: {{ include "novamail.deliveryImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             {{- toYaml .Values.securityContext | nindent 12 }}
           ports:
             - name: http
               containerPort: 8080
-            - name: smtp
-              containerPort: 2525
           envFrom:
             {{- include "novamail.depsEnvFrom" . | nindent 12 }}
           env:
-            {{- range $k, $v := .Values.ingressApp.env }}
+            {{- range $k, $v := .Values.delivery.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            - name: NOVAMAIL_SMARTHOST_ADDR
+              value: {{ .Values.delivery.smarthost.addr | quote }}
+            - name: NOVAMAIL_SMARTHOST_TLS
+              value: {{ .Values.delivery.smarthost.tls | quote }}
+            - name: NOVAMAIL_SMARTHOST_INSECURE
+              value: {{ .Values.delivery.smarthost.insecure | quote }}
           livenessProbe:
-            httpGet:
-              path: /healthz
-              port: http
+            httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 3
             periodSeconds: 10
           readinessProbe:
-            httpGet:
-              path: /readyz
-              port: http
+            httpGet: { path: /readyz, port: http }
             initialDelaySeconds: 2
             periodSeconds: 5
           resources:
-            {{- toYaml .Values.ingressApp.resources | nindent 12 }}
+            {{- toYaml .Values.delivery.resources | nindent 12 }}
           volumeMounts:
             - name: bodies
               mountPath: {{ .Values.bodyStore.mountPath }}
