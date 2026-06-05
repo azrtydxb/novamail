@@ -50,7 +50,7 @@ jobs:
     runs-on: arc-azrtydxb-publish
     strategy:
       matrix:
-        service: [ingress, delivery]
+        service: [ingress, delivery, dsn]
     steps:
       - uses: actions/checkout@v4
       - name: Compute image tag
@@ -113,3 +113,4 @@ jobs:
         run: |
           kubectl -n novamail rollout status deploy/novamail-ingress --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-delivery --timeout=120s
+          kubectl -n novamail rollout status deploy/novamail-dsn --timeout=120s

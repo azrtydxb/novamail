@@ -92,7 +92,7 @@ func main() {
 		logger.Info("dkim signing enabled", "domain", signer.Domain())
 	}
 
-	w := &worker{store: bodies, db: database, provider: provider, signer: signer, log: logger}
+	w := &worker{store: bodies, db: database, bus: bus, provider: provider, signer: signer, log: logger}
 
 	// Health/metrics server.
 	go serveHealth(env("NOVAMAIL_HTTP_ADDR", ":8080"), database, bus, logger)
@@ -107,17 +107,20 @@ func main() {
 	defer stop()
 	logger.Info("delivery worker started", "smarthost", os.Getenv("NOVAMAIL_SMARTHOST_ADDR"))
 
+	// Graceful drain: stop accepting new work on signal, but let the message
+	// currently being handled finish (it runs on a background context bounded by
+	// its own per-message timeout). Anything unacked is redelivered.
 	for {
 		select {
 		case <-ctx.Done():
-			logger.Info("shutting down")
+			logger.Info("draining; shutting down")
 			return
 		case d, ok := <-deliveries:
 			if !ok {
 				logger.Error("delivery channel closed")
 				return
 			}
-			w.handle(ctx, d)
+			w.handle(context.Background(), d)
 		}
 	}
 }
@@ -125,6 +128,7 @@ func main() {
 type worker struct {
 	store    *store.FSStore
 	db       *db.DB
+	bus      *amqp.Conn
 	provider providers.Provider
 	signer   *dkim.Signer
 	log      *slog.Logger
@@ -173,17 +177,42 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 		_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusRelayed, "relayed", w.provider.Name(), res.Detail)
 		_ = d.Ack(false)
 		w.log.Info("relayed", "id", job.MessageID, "provider", w.provider.Name())
+
 	case providers.Fail:
+		// Permanent (5xx): straight to the DLQ for a bounce.
 		failed.Inc()
 		_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusFailed, "failed", w.provider.Name(), res.Detail)
-		_ = d.Reject(false) // permanent → will go to the DLQ once wired (M2)
+		w.toDLQ(hctx, d, &job)
 		w.log.Warn("failed", "id", job.MessageID, "detail", res.Detail)
-	default: // Defer
+
+	default: // Defer (transient 4xx / network): escalate through the wait tiers.
 		deferred.Inc()
 		_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusDeferred, "deferred", w.provider.Name(), res.Detail)
-		_ = d.Nack(false, true) // requeue; retry tiers (TTL+DLX) replace this in M2
-		w.log.Warn("deferred", "id", job.MessageID, "err", sendErr)
+		job.Attempt++
+		if tier, ok := amqp.TierForAttempt(job.Attempt); ok {
+			if err := w.bus.Requeue(hctx, tier, &job); err != nil {
+				w.log.Error("requeue", "err", err, "id", job.MessageID)
+				_ = d.Nack(false, true) // keep it; try again
+				return
+			}
+			_ = d.Ack(false)
+			w.log.Warn("deferred", "id", job.MessageID, "tier", tier.Queue, "attempt", job.Attempt, "err", sendErr)
+		} else {
+			// Retries exhausted → permanent failure.
+			w.toDLQ(hctx, d, &job)
+			w.log.Warn("retries exhausted", "id", job.MessageID)
+		}
 	}
+}
+
+// toDLQ moves a job to the DLQ and acks the original delivery.
+func (w *worker) toDLQ(ctx context.Context, d amqp091.Delivery, job *model.RelayJob) {
+	if err := w.bus.DeadLetter(ctx, job); err != nil {
+		w.log.Error("dead-letter", "err", err, "id", job.MessageID)
+		_ = d.Nack(false, true)
+		return
+	}
+	_ = d.Ack(false)
 }
 
 func serveHealth(addr string, database *db.DB, bus *amqp.Conn, logger *slog.Logger) {

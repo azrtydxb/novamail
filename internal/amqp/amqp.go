@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
 
@@ -20,7 +21,34 @@ const (
 	// WorkQueue is the single catch-all delivery queue for M1 (per-domain
 	// queues arrive with the routing engine in M3).
 	WorkQueue = "relay.work.q"
+	// DLQ holds permanently-failed messages; the DSN generator consumes it.
+	DLQ = "relay.dlq"
 )
+
+// WaitTier is a retry backoff stage: a queue with a message TTL whose dead
+// letters route back to relay.work for another delivery attempt.
+type WaitTier struct {
+	Queue string
+	TTL   time.Duration
+}
+
+// WaitTiers defines the backoff schedule (spec §6). A deferred message escalates
+// through these in order; exhausting them dead-letters to the DLQ.
+var WaitTiers = []WaitTier{
+	{Queue: "wait.30s", TTL: 30 * time.Second},
+	{Queue: "wait.5m", TTL: 5 * time.Minute},
+	{Queue: "wait.30m", TTL: 30 * time.Minute},
+}
+
+// TierForAttempt returns the wait tier for the given (already-incremented)
+// attempt number, and ok=false when the schedule is exhausted (→ DLQ).
+func TierForAttempt(attempt int) (WaitTier, bool) {
+	idx := attempt - 1
+	if idx < 0 || idx >= len(WaitTiers) {
+		return WaitTier{}, false
+	}
+	return WaitTiers[idx], true
+}
 
 // Conn is a RabbitMQ connection with a channel for the data plane.
 type Conn struct {
@@ -55,11 +83,69 @@ func declare(ch *amqp.Channel) error {
 	}); err != nil {
 		return fmt.Errorf("declare queue: %w", err)
 	}
-	// "#" binds every recipient-domain routing key for now.
+	// "#" binds every recipient-domain routing key (and dead-lettered retries).
 	if err := ch.QueueBind(WorkQueue, "#", WorkExchange, false, nil); err != nil {
 		return fmt.Errorf("bind queue: %w", err)
 	}
+
+	// Retry tiers: each wait queue holds a message for its TTL, then dead-letters
+	// back to relay.work for another delivery attempt (pure core AMQP, no plugins).
+	for _, t := range WaitTiers {
+		if _, err := ch.QueueDeclare(t.Queue, true, false, false, false, amqp.Table{
+			"x-queue-type":             "quorum",
+			"x-message-ttl":            int64(t.TTL / time.Millisecond),
+			"x-dead-letter-exchange":   WorkExchange,
+			"x-dead-letter-routing-key": "retry",
+		}); err != nil {
+			return fmt.Errorf("declare %s: %w", t.Queue, err)
+		}
+	}
+
+	// Permanent failures land here for the DSN generator.
+	if _, err := ch.QueueDeclare(DLQ, true, false, false, false, amqp.Table{
+		"x-queue-type": "quorum",
+	}); err != nil {
+		return fmt.Errorf("declare dlq: %w", err)
+	}
 	return nil
+}
+
+// Requeue publishes a job (with its incremented Attempt) onto a wait tier via
+// the default exchange; it dead-letters back to relay.work when the TTL expires.
+func (c *Conn) Requeue(ctx context.Context, tier WaitTier, job *model.RelayJob) error {
+	return c.publishToQueue(ctx, tier.Queue, job)
+}
+
+// DeadLetter publishes a permanently-failed job to the DLQ.
+func (c *Conn) DeadLetter(ctx context.Context, job *model.RelayJob) error {
+	return c.publishToQueue(ctx, DLQ, job)
+}
+
+func (c *Conn) publishToQueue(ctx context.Context, queue string, job *model.RelayJob) error {
+	body, err := json.Marshal(job)
+	if err != nil {
+		return fmt.Errorf("marshal job: %w", err)
+	}
+	// Default exchange routes by queue name.
+	return c.ch.PublishWithContext(ctx, "", queue, false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Persistent,
+		MessageId:    job.MessageID,
+		Body:         body,
+	})
+}
+
+// ConsumeQueue consumes an arbitrary queue with manual acks (used by the DSN
+// generator for the DLQ).
+func (c *Conn) ConsumeQueue(queue string, prefetch int) (<-chan amqp.Delivery, error) {
+	if err := c.ch.Qos(prefetch, 0, false); err != nil {
+		return nil, fmt.Errorf("qos: %w", err)
+	}
+	d, err := c.ch.Consume(queue, "", false, false, false, false, nil)
+	if err != nil {
+		return nil, fmt.Errorf("consume %s: %w", queue, err)
+	}
+	return d, nil
 }
 
 // Publish serialises a job and publishes it keyed on the recipient domain.
