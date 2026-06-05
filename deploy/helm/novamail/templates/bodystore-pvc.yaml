@@ -1,0 +1,15 @@
+{{- if .Values.bodyStore.enabled }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "novamail.fullname" . }}-bodies
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+spec:
+  accessModes:
+    - {{ .Values.bodyStore.accessMode }}
+  storageClassName: {{ .Values.bodyStore.storageClassName }}
+  resources:
+    requests:
+      storage: {{ .Values.bodyStore.size }}
+{{- end }}

@@ -1,0 +1,37 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "novamail.fullname" . }}-ingress
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingress
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "novamail.ingress.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.service.httpPort }}
+      targetPort: http
+    - name: smtp
+      port: {{ .Values.service.smtpPort }}
+      targetPort: smtp
+{{- if .Values.smtpLoadBalancer.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "novamail.fullname" . }}-smtp
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingress
+spec:
+  type: LoadBalancer
+  externalTrafficPolicy: {{ .Values.smtpLoadBalancer.externalTrafficPolicy }}
+  selector:
+    {{- include "novamail.ingress.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: smtp
+      port: 587
+      targetPort: smtp
+{{- end }}

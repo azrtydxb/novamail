@@ -1,0 +1,42 @@
+# https://taskfile.dev — build/test/lint per service.
+version: "3"
+
+vars:
+  SERVICES: ingress delivery dsn
+  LDFLAGS: -s -w
+
+tasks:
+  default:
+    cmds:
+      - task: lint
+      - task: test
+
+  tidy:
+    desc: Sync go.mod/go.sum
+    cmds:
+      - go mod tidy
+
+  build:
+    desc: Build all data-plane binaries into ./bin
+    cmds:
+      - for: { var: SERVICES }
+        cmd: go build -ldflags "{{.LDFLAGS}}" -o bin/{{.ITEM}} ./cmd/{{.ITEM}}
+
+  test:
+    desc: Run unit tests with the race detector
+    cmds:
+      - go test -race ./...
+
+  vet:
+    cmds:
+      - go vet ./...
+
+  lint:
+    desc: go vet + golangci-lint
+    cmds:
+      - task: vet
+      - golangci-lint run ./...
+
+  run:ingress:
+    cmds:
+      - go run ./cmd/ingress

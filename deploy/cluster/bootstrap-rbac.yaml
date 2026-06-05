@@ -1,0 +1,44 @@
+# One-time cluster bootstrap so the ARC runner can `helm upgrade --install` into
+# the novamail namespace using its in-cluster ServiceAccount token (no kubeconfig
+# secret needed). Apply once with: kubectl apply -f deploy/cluster/bootstrap-rbac.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: novamail
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: novamail-deployer
+  namespace: novamail
+rules:
+  - apiGroups: [""]
+    resources: [services, persistentvolumeclaims, configmaps, secrets, serviceaccounts, pods, events, endpoints]
+    verbs: ["*"]
+  - apiGroups: [apps]
+    resources: [deployments, replicasets, statefulsets]
+    verbs: ["*"]
+  - apiGroups: [networking.k8s.io]
+    resources: [ingresses]
+    verbs: ["*"]
+  - apiGroups: [monitoring.coreos.com]
+    resources: [servicemonitors]
+    verbs: ["*"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: novamail-deployer
+  namespace: novamail
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: novamail-deployer
+subjects:
+  # Both ARC scale-set runner ServiceAccounts (they ship with zero permissions).
+  - kind: ServiceAccount
+    name: arc-azrtydxb-gha-rs-no-permission
+    namespace: arc-runners
+  - kind: ServiceAccount
+    name: arc-azrtydxb-publish-gha-rs-no-permission
+    namespace: arc-runners

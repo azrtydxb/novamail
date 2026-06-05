@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "novamail.fullname" . }}-ingress
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+    app.kubernetes.io/component: ingress
+spec:
+  replicas: {{ .Values.ingressApp.replicas }}
+  selector:
+    matchLabels:
+      {{- include "novamail.ingress.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "novamail.ingress.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: ingress
+          image: {{ include "novamail.image" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: 8080
+            - name: smtp
+              containerPort: 2525
+          env:
+            {{- range $k, $v := .Values.ingressApp.env }}
+            - name: {{ $k }}
+              value: {{ $v | quote }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.ingressApp.resources | nindent 12 }}
+          volumeMounts:
+            - name: bodies
+              mountPath: {{ .Values.bodyStore.mountPath }}
+      volumes:
+        - name: bodies
+          {{- if .Values.bodyStore.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "novamail.fullname" . }}-bodies
+          {{- else }}
+          emptyDir: {}
+          {{- end }}

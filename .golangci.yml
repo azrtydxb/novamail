@@ -1,0 +1,16 @@
+version: "2"
+
+linters:
+  enable:
+    - misspell
+    - revive
+  settings:
+    revive:
+      rules:
+        # ctx is part of the Store interface and kept for future cancellation.
+        - name: unused-parameter
+          disabled: true
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters: [errcheck]

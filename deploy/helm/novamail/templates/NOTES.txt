@@ -1,0 +1,10 @@
+novamail {{ .Chart.AppVersion }} deployed as release "{{ .Release.Name }}" in namespace "{{ .Release.Namespace }}".
+
+Image:      {{ include "novamail.image" . }}
+{{- if .Values.ingress.enabled }}
+HTTP:       https://{{ .Values.ingress.host }}/healthz   (liveness)
+            https://{{ .Values.ingress.host }}/metrics    (Prometheus)
+{{- end }}
+
+Check rollout:
+  kubectl -n {{ .Release.Namespace }} rollout status deploy/{{ include "novamail.fullname" . }}-ingress
