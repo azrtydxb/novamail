@@ -27,11 +27,11 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] Verify: green pipeline + `https://ingress.kw.local/healthz` reachable on kw.
 
 ## M0.5 — Dependency stack on kw (lightweight, single-instance)
-- [ ] Postgres (Longhorn PVC) — Helm subchart or separate release in `novamail-deps` ns.
-- [ ] RabbitMQ 4.x (single node now, quorum-queue config; 3-node in M2).
-- [ ] Body-store RWX PVC wired into ingress + delivery.
-- [ ] `/api` shared contracts: relay job schema, `config.changed` event, config DTOs (versioned JSON Schema).
-- [ ] `/migrations`: initial schema (`messages`, `message_events`, plus config tables stubs).
+- [x] Postgres (Longhorn PVC) — Helm subchart or separate release in `novamail-deps` ns.
+- [x] RabbitMQ 4.x (single node now, quorum-queue config; 3-node in M2).
+- [x] Body-store RWX PVC wired into ingress + delivery.
+- [x] `/api` shared contracts: relay job schema, `config.changed` event, config DTOs (versioned JSON Schema).
+- [x] `/migrations`: initial schema (`messages`, `message_events`, plus config tables stubs).
 
 ## M1 — Core relay (single provider)
 - [ ] Ingress: SMTP AUTH (PLAIN/LOGIN over TLS), STARTTLS:587 + implicit TLS:465, inbound authz (accounts, relay domains).

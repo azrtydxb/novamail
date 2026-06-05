@@ -1,0 +1,28 @@
+# One-shot migration runner for M0.5. Applies the SQL shipped in the
+# `novamail-migrations` ConfigMap against Postgres using the DSN from the
+# novamail-postgres Secret. M1 will replace this with golang-migrate in CI.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: novamail-migrate-0001
+  namespace: novamail
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: migrate
+          image: postgres:16
+          command: ["sh", "-c", "psql \"$DSN\" -v ON_ERROR_STOP=1 -f /sql/0001_init.sql"]
+          env:
+            - name: DSN
+              valueFrom:
+                secretKeyRef: { name: novamail-postgres, key: DSN }
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+      volumes:
+        - name: sql
+          configMap:
+            name: novamail-migrations
