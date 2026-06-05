@@ -23,7 +23,25 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: ingress
 {{- end -}}
 
-{{- define "novamail.image" -}}
+{{- define "novamail.ingressImage" -}}
 {{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
-{{- printf "%s:%s" .Values.image.repository $tag -}}
+{{- printf "%s/ingress:%s" .Values.image.registry $tag -}}
+{{- end -}}
+
+{{- define "novamail.deliveryImage" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
+{{- printf "%s/delivery:%s" .Values.image.registry $tag -}}
+{{- end -}}
+
+{{- define "novamail.delivery.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "novamail.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: delivery
+{{- end -}}
+
+{{- define "novamail.depsEnvFrom" -}}
+- secretRef:
+    name: {{ .Values.secrets.postgres }}
+- secretRef:
+    name: {{ .Values.secrets.rabbitmq }}
 {{- end -}}

@@ -13,7 +13,7 @@ concurrency:
 env:
   # Cluster Zot registry (cluster-CA trusted by node containerd).
   REGISTRY: 192.168.10.123:5000
-  IMAGE: 192.168.10.123:5000/azrtydxb/novamail/ingress
+  IMAGE_BASE: 192.168.10.123:5000/azrtydxb/novamail
 
 jobs:
   test:
@@ -48,8 +48,9 @@ jobs:
     needs: [test, lint, helm-lint]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-azrtydxb-publish
-    outputs:
-      tag: ${{ steps.meta.outputs.tag }}
+    strategy:
+      matrix:
+        service: [ingress, delivery]
     steps:
       - uses: actions/checkout@v4
       - name: Compute image tag
@@ -64,19 +65,19 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      - name: Build & push (arm64 → zot)
+      - name: Build & push ${{ matrix.service }} (arm64 → zot)
         uses: docker/build-push-action@v6
         with:
           context: .
           builder: nm
           platforms: linux/arm64
-          build-args: SERVICE=ingress
+          build-args: SERVICE=${{ matrix.service }}
           push: true
           tags: |
-            ${{ env.IMAGE }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE }}:main
-          cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-ingress:arm64
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-ingress:arm64,mode=max,image-manifest=true
+            ${{ env.IMAGE_BASE }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_BASE }}/${{ matrix.service }}:main
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true
 
   deploy:
     needs: [build-image]
@@ -103,9 +104,12 @@ jobs:
           kubectl config use-context kw
       - name: Helm upgrade --install
         run: |
+          TAG="sha-${GITHUB_SHA::7}"
           helm upgrade --install novamail deploy/helm/novamail \
             --namespace novamail \
-            --set image.tag=${{ needs.build-image.outputs.tag }} \
+            --set image.tag="$TAG" \
             --wait --timeout 5m
       - name: Rollout status
-        run: kubectl -n novamail rollout status deploy/novamail-ingress --timeout=120s
+        run: |
+          kubectl -n novamail rollout status deploy/novamail-ingress --timeout=120s
+          kubectl -n novamail rollout status deploy/novamail-delivery --timeout=120s
