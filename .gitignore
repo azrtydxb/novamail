@@ -1,0 +1,20 @@
+# Build output
+/bin/
+/dist/
+*.test
+*.out
+coverage.*
+
+# Go
+/vendor/
+
+# Local env / secrets
+.env
+*.local
+*.pem
+*.key
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/

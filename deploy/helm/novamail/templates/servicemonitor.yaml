@@ -1,0 +1,16 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "novamail.fullname" . }}-ingress
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "novamail.ingress.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: {{ .Values.serviceMonitor.interval }}
+{{- end }}

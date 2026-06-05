@@ -1,0 +1,7 @@
+apiVersion: v2
+name: novamail
+description: Cloud-native SMTP relay (data plane) for the kw k3s cluster
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.25.0-0"

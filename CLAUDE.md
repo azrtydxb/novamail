@@ -1,0 +1,84 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Project status
+
+This is a **greenfield, spec-driven** project. As of this writing the repo contains only `LICENSE` (Apache 2.0) and `smtp-relay-handover-spec.md`. No code, build tooling, or migrations exist yet.
+
+**`smtp-relay-handover-spec.md` is the build contract.** Read it before implementing anything — it defines scope, architecture, the data model, message-bus topology, and the milestone build order (M1–M5). When the spec and this file disagree, the spec wins; update this file as code lands.
+
+## What this is
+
+A cloud-native, horizontally-scalable **SMTP relay** with a management GUI. Clients submit mail; the relay authorizes, queues, DKIM-signs, and forwards each message through a pluggable, authenticated **upstream provider** (Gmail/Workspace XOAUTH2, Amazon SES, Microsoft 365, generic SMTP smarthost). Deploys identically on Kubernetes, Docker, and bare metal.
+
+## Architecture: two decoupled planes
+
+This separation is the central design invariant — preserve it in every change.
+
+- **Management plane** (off the mail path): React+Vite GUI → Fastify Admin API → Postgres. Only reads/writes config and emits change notifications. Never handles mail.
+- **Data plane** (runs even if management plane or Postgres is briefly down): Go binaries for ingress, delivery, and DSN generation. Each service caches operational config locally and keeps relaying mail independently.
+
+The two planes communicate **only** through (a) the shared Postgres schema and (b) the versioned schemas in `/api`. The Go data-plane binaries have zero knowledge of the GUI.
+
+## Hard constraints (do not violate without updating the spec)
+
+- **Relay only — no direct-to-MX delivery.** Every message exits via an authenticated upstream provider. This is explicitly out of scope for v1; do not add IP-warmup, PTR/rDNS, port-25 egress, or MTA-STS/DANE sender enforcement.
+- **Postgres is the single source of truth** for operational config. No app config in CRDs, ConfigMaps, or files. The only sanctioned CRDs are cert-manager's (ACME/TLS) and standard service discovery. No SQLite path.
+- **The work queue lives in RabbitMQ, not Postgres.** Postgres holds config, message metadata, and audit only.
+- **The bus carries references, not blobs.** Message bodies live only in the shared file store; jobs and `config.changed` events stay small and reference bodies by ID.
+- **No object store / S3 dependency.** Message bodies are written to a **shared filesystem on a ReadWriteMany volume** (Longhorn RWX or NFS on kw), keyed by message id. RWX is mandatory: ingress writes the body, a separate delivery pod reads it. `internal/store` is interface-backed with a Postgres-`bytea` fallback for single-node/tiny deployments.
+- **RabbitMQ 4.x quorum queues only** on a 3-node cluster. Classic mirroring is removed in 4.x; do not use it.
+- **GUI is its own service/image.** Never embed it into a Go binary.
+- **`/api` is the integration boundary.** Versioned JSON Schema / protobuf for the relay job, the `config.changed` event, and config DTOs. Never break these silently — Go producers/consumers and the Fastify publisher all depend on them.
+- **Secrets** (provider creds, DKIM private keys) are envelope-encrypted at rest, never stored plaintext in Postgres, never logged.
+
+## Tech stack
+
+| Layer | Choice | Key libraries |
+|---|---|---|
+| Data-plane services | Go | `emersion/go-smtp`, `emersion/go-sasl` (PLAIN/LOGIN/XOAUTH2), `emersion/go-msgauth` (DKIM/ARC), `rabbitmq/amqp091-go`, `pgx` |
+| Message bus | RabbitMQ 4.x | Quorum queues only |
+| Config/metadata store | PostgreSQL | Single source of truth |
+| Message-body store | Shared filesystem (RWX volume) | Files keyed by message id; no S3/MinIO. Interface-backed; Postgres-`bytea` fallback for tiny deployments |
+| Admin API | Fastify (Node + TypeScript) | |
+| GUI | React + Vite (TypeScript) | |
+| Packaging | Helm, docker-compose, systemd | Multi-arch distroless images |
+| Observability | Prometheus, `slog`, health probes | |
+
+## Planned repository layout (monorepo)
+
+```
+/cmd          ingress/ delivery/ dsn/   # Go binaries (one per data-plane service)
+/internal     smtp/ routing/ providers/ dkim/ amqp/ config/ store/ authz/ model/
+/services     admin-api/                # Fastify + TypeScript
+/web                                     # React + Vite app (separate build + image)
+/api                                     # SHARED CONTRACTS: job, config-event, config DTOs
+/deploy       helm/ docker-compose/ systemd/
+/migrations                              # SQL migrations (golang-migrate or sqlc-compatible)
+Taskfile.yml                             # build/test/lint per service
+```
+
+## Commands
+
+No build tooling exists yet. The spec mandates a **`Taskfile.yml`** (go-task) for build/test/lint per service — create it when scaffolding M1. Until then there are no project-specific build, lint, or test commands.
+
+## Message flow & retry model
+
+Ingress accepts → writes body to object store, metadata to Postgres, publishes a job to the `relay.work` topic exchange (routing key = **recipient domain**, so a throttled domain gets its own queue and never head-of-line-blocks others). Delivery worker consumes with **manual acks**, resolves the route, signs, relays to the provider, and acks only after successful upstream handoff.
+
+Retries use pure-core AMQP, no plugins: a transient 4xx → `reject` (no requeue) → message dead-letters into a **wait queue** (`wait.30s`, `wait.5m`, `wait.30m`) with a TTL + DLX pointing back at `relay.work`; on TTL expiry it re-enters delivery. Permanent 5xx / max attempts → `relay.dlq`, consumed by the DSN generator which builds RFC 3464 bounces and republishes them through `relay.work`.
+
+A worker dying mid-delivery leaves its message unacked; RabbitMQ redelivers to another consumer — this is the per-message failover guarantee, no offset bookkeeping.
+
+## Provider & routing model
+
+Providers implement a common `Provider` interface (`Send` → `Delivered | Defer(4xx) | Fail(5xx)`, `Capabilities`, `Name`). Routing precedence per message: **recipient-domain rule → sender-domain rule → default provider.** Each rule is independently toggleable and can define a failover chain; a `Defer`/`Fail` can advance the chain before falling back to the retry tiers.
+
+## Hot reload
+
+Each data-plane service loads operational config at boot, **caches it locally**, and subscribes to a `config.changed` fanout exchange. The Admin API publishes that event after a successful Postgres write; services reload only the affected config slice, live, with no restart. This cache is what lets the data plane survive management-plane and short Postgres outages.
+
+## Build order (milestones)
+
+M1 Core relay (generic SMTP provider, single path) → M2 Resilience (retry tiers, DLQ/DSN, 3-node HA, graceful drain) → M3 Providers + routing (Gmail/XOAUTH2, SES, M365, failover, rate limiting) → M4 Management plane (Admin API, config schema, hot reload, GUI) → M5 Packaging (Helm, compose, systemd, cert-manager, multi-arch). v2 deferred: direct-to-MX, MTA-STS/DANE, inbound SPF/DKIM verification, multi-tenancy/RBAC.

@@ -1,0 +1,75 @@
+# Default values for novamail (M0 walking skeleton: ingress only).
+# Deploys to the kw k3s cluster. Real services (delivery, dsn) are added as
+# milestones land.
+
+nameOverride: ""
+fullnameOverride: "novamail"
+
+image:
+  # Cluster Zot registry — cluster-CA is trusted by containerd on every node, so
+  # pulls need no imagePullSecret. (Release images also land in ghcr; see release.yml.)
+  repository: 192.168.10.123:5000/azrtydxb/novamail/ingress
+  # tag defaults to .Chart.appVersion; the deploy pipeline overrides with the git sha.
+  tag: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+ingressApp:
+  replicas: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    NOVAMAIL_HTTP_ADDR: ":8080"
+    NOVAMAIL_SMTP_ADDR: ":2525"
+    NOVAMAIL_BODY_STORE: "/var/lib/novamail/bodies"
+
+# Shared body store — ReadWriteMany so ingress and (later) delivery pods share it.
+bodyStore:
+  enabled: true
+  storageClassName: longhorn   # Longhorn RWX on kw; or set to an NFS-backed SC
+  accessMode: ReadWriteMany
+  size: 10Gi
+  mountPath: /var/lib/novamail/bodies
+
+service:
+  httpPort: 8080
+  smtpPort: 2525
+
+# HTTP ingress (health/metrics/UI later) via ingress-nginx + cluster-ca.
+ingress:
+  enabled: true
+  className: nginx
+  host: ingress.kw.local
+  annotations:
+    cert-manager.io/cluster-issuer: cluster-ca
+  tls: true
+
+# Expose the SMTP listener on a kube-vip LoadBalancer IP (off by default in M0).
+smtpLoadBalancer:
+  enabled: false
+  # externalTrafficPolicy MUST be Cluster on kw (kube-vip leader rarely has a local backend).
+  externalTrafficPolicy: Cluster
+
+serviceMonitor:
+  enabled: true   # Prometheus on kw auto-discovers ServiceMonitors
+  interval: 30s
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532    # distroless nonroot
+  runAsGroup: 65532
+  fsGroup: 65532      # so the nonroot user can write the RWX PVC
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]

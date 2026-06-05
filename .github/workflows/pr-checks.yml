@@ -1,0 +1,47 @@
+name: PR Checks
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
+
+concurrency:
+  group: pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: arc-azrtydxb
+    container:
+      image: golang:1.23
+    steps:
+      - uses: actions/checkout@v4
+      - run: go vet ./...
+      - run: go test -race ./...
+
+  lint:
+    runs-on: arc-azrtydxb
+    container:
+      image: golangci/golangci-lint:v2.10.1
+    steps:
+      - uses: actions/checkout@v4
+      - run: golangci-lint run ./...
+
+  helm-lint:
+    runs-on: arc-azrtydxb
+    container:
+      image: alpine/helm:3.16.2
+    steps:
+      - uses: actions/checkout@v4
+      - run: helm lint deploy/helm/novamail
+
+  all-checks-passed:
+    needs: [test, lint, helm-lint]
+    if: always()
+    runs-on: arc-azrtydxb
+    steps:
+      - name: Verify
+        run: |
+          [ "${{ needs.test.result }}" = "success" ] &&
+          [ "${{ needs.lint.result }}" = "success" ] &&
+          [ "${{ needs.helm-lint.result }}" = "success" ] || exit 1

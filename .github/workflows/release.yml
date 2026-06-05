@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+env:
+  GHCR_IMAGE: ghcr.io/azrtydxb/novamail/ingress
+  ZOT: 192.168.10.123:5000
+
+jobs:
+  image:
+    runs-on: arc-azrtydxb-publish
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Version
+        id: v
+        run: echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Buildx (zot insecure)
+        run: |
+          cat > /tmp/buildkitd.toml <<'EOF'
+          [registry."192.168.10.123:5000"]
+            insecure = true
+          EOF
+          docker buildx create --name nm --driver docker-container \
+            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
+          docker buildx inspect --bootstrap
+      - name: Build & push multi-arch → ghcr + zot
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          builder: nm
+          platforms: linux/arm64,linux/amd64
+          build-args: SERVICE=ingress
+          push: true
+          tags: |
+            ${{ env.GHCR_IMAGE }}:${{ steps.v.outputs.version }}
+            ${{ env.GHCR_IMAGE }}:latest
+            ${{ env.ZOT }}/azrtydxb/novamail/ingress:${{ steps.v.outputs.version }}
+            ${{ env.ZOT }}/azrtydxb/novamail/ingress:latest
+
+  helm-publish:
+    needs: [image]
+    runs-on: arc-azrtydxb-publish
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+      - name: Version
+        id: v
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+      - name: Package & push chart (OCI → ghcr)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io \
+            --username "${{ github.actor }}" --password-stdin
+          helm package deploy/helm/novamail \
+            --version "${{ steps.v.outputs.version }}" \
+            --app-version "${{ steps.v.outputs.version }}"
+          helm push novamail-${{ steps.v.outputs.version }}.tgz \
+            oci://ghcr.io/azrtydxb/charts
+
+  github-release:
+    needs: [image, helm-publish]
+    runs-on: arc-azrtydxb
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
