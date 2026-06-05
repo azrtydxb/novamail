@@ -86,11 +86,12 @@ jobs:
     runs-on: arc-azrtydxb
     steps:
       - uses: actions/checkout@v4
-      - name: Install helm + kubectl
-        run: |
-          curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
-          curl -fsSLo /usr/local/bin/kubectl "https://dl.k8s.io/release/v1.31.0/bin/linux/$(dpkg --print-architecture)/kubectl"
-          chmod +x /usr/local/bin/kubectl
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.2
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.31.0
       - name: Build kubeconfig from in-cluster SA token
         run: |
           SA=/var/run/secrets/kubernetes.io/serviceaccount
