@@ -19,7 +19,7 @@ jobs:
   test:
     runs-on: arc-azrtydxb
     container:
-      image: golang:1.23
+      image: golang:1.25
     steps:
       - uses: actions/checkout@v4
       - name: go vet
