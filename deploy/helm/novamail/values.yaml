@@ -45,6 +45,15 @@ tls:
     - novamail-ingress.novamail.svc.cluster.local
     - smtp.kw.local
 
+dsn:
+  replicas: 1
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 250m, memory: 128Mi }
+  env:
+    NOVAMAIL_HTTP_ADDR: ":8080"
+    NOVAMAIL_BODY_STORE: "/var/lib/novamail/bodies"
+
 delivery:
   replicas: 1
   resources:

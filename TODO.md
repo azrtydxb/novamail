@@ -41,9 +41,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] End-to-end relay through a generic smarthost proven on kw.
 
 ## M2 — Resilience
-- [ ] Retry tiers: `wait.30s/5m/30m` queues (TTL + DLX back to `relay.work`).
-- [ ] `relay.dlq` + `cmd/dsn` (RFC 3464 DSN generator) republishing bounces.
-- [ ] RabbitMQ 3-node quorum cluster; graceful drain on shutdown.
+- [x] Retry tiers: `wait.30s/5m/30m` queues (TTL + DLX back to `relay.work`).
+- [x] `relay.dlq` + `cmd/dsn` (RFC 3464 DSN generator) republishing bounces.
+- [~] RabbitMQ 3-node quorum cluster (TODO); graceful drain on shutdown (done).
 
 ## M3 — Providers + routing
 - [ ] Providers: Gmail/XOAUTH2 (token refresh), Amazon SES, Microsoft 365.
