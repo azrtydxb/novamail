@@ -1,0 +1,73 @@
+# Single-node RabbitMQ 4.x for novamail (M0.5). Longhorn-backed.
+# The delivery worker declares its queues as quorum queues at runtime
+# (x-queue-type=quorum); a 3-node quorum cluster arrives in M2.
+# Credentials come from the `novamail-rabbitmq` Secret (created out-of-band).
+apiVersion: v1
+kind: Service
+metadata:
+  name: novamail-rabbitmq
+  namespace: novamail
+  labels: { app.kubernetes.io/name: novamail-rabbitmq }
+spec:
+  type: ClusterIP
+  selector: { app.kubernetes.io/name: novamail-rabbitmq }
+  ports:
+    - name: amqp
+      port: 5672
+      targetPort: 5672
+    - name: management
+      port: 15672
+      targetPort: 15672
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: novamail-rabbitmq
+  namespace: novamail
+  labels: { app.kubernetes.io/name: novamail-rabbitmq }
+spec:
+  serviceName: novamail-rabbitmq
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: novamail-rabbitmq }
+  template:
+    metadata:
+      labels: { app.kubernetes.io/name: novamail-rabbitmq }
+    spec:
+      containers:
+        - name: rabbitmq
+          image: rabbitmq:4-management
+          envFrom:
+            - secretRef: { name: novamail-rabbitmq }
+          ports:
+            - name: amqp
+              containerPort: 5672
+            - name: management
+              containerPort: 15672
+          readinessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+            initialDelaySeconds: 15
+            periodSeconds: 10
+            timeoutSeconds: 10
+          livenessProbe:
+            exec:
+              command: ["rabbitmq-diagnostics", "-q", "ping"]
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/rabbitmq
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        storageClassName: longhorn
+        resources:
+          requests:
+            storage: 5Gi

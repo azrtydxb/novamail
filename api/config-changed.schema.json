@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novamail.azrtydxb/api/config-changed.schema.json",
+  "title": "ConfigChangedEvent",
+  "description": "Published by the Admin API to the config fanout exchange after a successful Postgres write. Data-plane services reload the affected slice live.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["v", "epoch", "slices", "changedAt"],
+  "properties": {
+    "v": { "type": "integer", "const": 1 },
+    "epoch": { "type": "integer", "minimum": 1, "description": "Monotonic config version; services ignore events with epoch <= their loaded epoch." },
+    "slices": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Which config slices changed, so a service can reload only what it needs.",
+      "items": {
+        "type": "string",
+        "enum": ["providers", "routing_rules", "relay_domains", "accounts", "dkim_keys", "tls_policy", "rate_limits"]
+      }
+    },
+    "changedAt": { "type": "string", "format": "date-time" }
+  }
+}

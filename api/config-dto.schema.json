@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://novamail.azrtydxb/api/config-dto.schema.json",
+  "title": "ConfigDTOs",
+  "description": "Shapes the Admin API (Fastify) and GUI read/write, mapping to the Postgres operational-config tables. The Go data plane reads the same tables. Versioned together with the DB schema.",
+  "$defs": {
+    "Provider": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "enabled"],
+      "properties": {
+        "id": { "type": "string" },
+        "type": { "type": "string", "enum": ["gmail", "ses", "m365", "smtp"] },
+        "endpoint": { "type": "string" },
+        "authMode": { "type": "string", "enum": ["xoauth2", "smtp-auth", "ip", "iam"] },
+        "enabled": { "type": "boolean" },
+        "secretRef": { "type": "string", "description": "Name of the envelope-encrypted secret; credentials are never returned inline." }
+      }
+    },
+    "RoutingRule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "priority", "enabled", "providerChain"],
+      "properties": {
+        "id": { "type": "string" },
+        "recipientDomain": { "type": "string" },
+        "senderDomain": { "type": "string" },
+        "providerChain": { "type": "array", "minItems": 1, "items": { "type": "string" }, "description": "Provider ids; first is primary, rest are failover." },
+        "priority": { "type": "integer" },
+        "enabled": { "type": "boolean" }
+      }
+    },
+    "RelayDomain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["domain"],
+      "properties": { "domain": { "type": "string" } }
+    },
+    "Account": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "username", "allowedSenderDomains"],
+      "properties": {
+        "id": { "type": "string" },
+        "username": { "type": "string" },
+        "allowedSenderDomains": { "type": "array", "items": { "type": "string" } },
+        "ipAllowlist": { "type": "array", "items": { "type": "string", "description": "IP or CIDR" } }
+      }
+    }
+  }
+}
