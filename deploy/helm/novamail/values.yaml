@@ -6,9 +6,10 @@ nameOverride: ""
 fullnameOverride: "novamail"
 
 image:
-  # Cluster Zot registry — cluster-CA is trusted by containerd on every node, so
-  # pulls need no imagePullSecret. (Release images also land in ghcr; see release.yml.)
-  repository: 192.168.10.123:5000/azrtydxb/novamail/ingress
+  # Pulled via the ghcr.io name: node containerd mirrors ghcr.io -> the Zot
+  # registry at 192.168.10.123 (cluster-CA TLS), which serves the repo path
+  # azrtydxb/novamail/ingress that CI pushes. No imagePullSecret needed.
+  repository: ghcr.io/azrtydxb/novamail/ingress
   # tag defaults to .Chart.appVersion; the deploy pipeline overrides with the git sha.
   tag: ""
   pullPolicy: IfNotPresent
