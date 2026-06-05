@@ -34,10 +34,10 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] `/migrations`: initial schema (`messages`, `message_events`, plus config tables stubs).
 
 ## M1 — Core relay (single provider)
-- [~] Ingress: SMTP AUTH (PLAIN/LOGIN over TLS), STARTTLS:587 + implicit TLS:465, inbound authz (accounts, relay domains).
+- [x] Ingress: SMTP AUTH (PLAIN over TLS), STARTTLS:587 + implicit TLS:465, inbound authz (accounts, allowed sender domains).
 - [x] Ingress: body → file store, metadata → Postgres, publish job → `relay.work` (topic, key=recipient domain).
 - [x] `cmd/delivery`: consume with manual acks, resolve route, fetch body, **generic SMTP provider** handoff, ack on success.
-- [ ] `internal/dkim`: basic DKIM signing per sending domain.
+- [x] `internal/dkim`: basic DKIM signing per sending domain.
 - [x] End-to-end relay through a generic smarthost proven on kw.
 
 ## M2 — Resilience

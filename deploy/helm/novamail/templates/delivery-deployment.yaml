@@ -43,6 +43,14 @@ spec:
               value: {{ .Values.delivery.smarthost.tls | quote }}
             - name: NOVAMAIL_SMARTHOST_INSECURE
               value: {{ .Values.delivery.smarthost.insecure | quote }}
+            {{- if .Values.delivery.dkim.enabled }}
+            - name: NOVAMAIL_DKIM_DOMAIN
+              value: {{ .Values.delivery.dkim.domain | quote }}
+            - name: NOVAMAIL_DKIM_SELECTOR
+              value: {{ .Values.delivery.dkim.selector | quote }}
+            - name: NOVAMAIL_DKIM_KEY
+              value: {{ printf "%s/%s" .Values.delivery.dkim.mountPath .Values.delivery.dkim.keyFile | quote }}
+            {{- end }}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 3
@@ -56,6 +64,11 @@ spec:
           volumeMounts:
             - name: bodies
               mountPath: {{ .Values.bodyStore.mountPath }}
+            {{- if .Values.delivery.dkim.enabled }}
+            - name: dkim
+              mountPath: {{ .Values.delivery.dkim.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: bodies
           {{- if .Values.bodyStore.enabled }}
@@ -64,3 +77,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.delivery.dkim.enabled }}
+        - name: dkim
+          secret:
+            secretName: {{ .Values.delivery.dkim.secretName }}
+        {{- end }}

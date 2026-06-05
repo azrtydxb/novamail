@@ -32,12 +32,24 @@ spec:
               containerPort: 8080
             - name: smtp
               containerPort: 2525
+            {{- if .Values.tls.enabled }}
+            - name: submission
+              containerPort: 2587
+            - name: smtps
+              containerPort: 2465
+            {{- end }}
           envFrom:
             {{- include "novamail.depsEnvFrom" . | nindent 12 }}
           env:
             {{- range $k, $v := .Values.ingressApp.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}
+            {{- end }}
+            {{- if .Values.tls.enabled }}
+            - name: NOVAMAIL_TLS_CERT
+              value: {{ printf "%s/tls.crt" .Values.tls.mountPath | quote }}
+            - name: NOVAMAIL_TLS_KEY
+              value: {{ printf "%s/tls.key" .Values.tls.mountPath | quote }}
             {{- end }}
           livenessProbe:
             httpGet:
@@ -56,6 +68,11 @@ spec:
           volumeMounts:
             - name: bodies
               mountPath: {{ .Values.bodyStore.mountPath }}
+            {{- if .Values.tls.enabled }}
+            - name: tls
+              mountPath: {{ .Values.tls.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: bodies
           {{- if .Values.bodyStore.enabled }}
@@ -64,3 +81,8 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret:
+            secretName: {{ .Values.tls.secretName }}
+        {{- end }}

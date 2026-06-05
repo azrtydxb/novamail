@@ -23,6 +23,7 @@ import (
 
 	"github.com/azrtydxb/novamail/internal/amqp"
 	"github.com/azrtydxb/novamail/internal/db"
+	"github.com/azrtydxb/novamail/internal/dkim"
 	"github.com/azrtydxb/novamail/internal/model"
 	"github.com/azrtydxb/novamail/internal/providers"
 	"github.com/azrtydxb/novamail/internal/store"
@@ -78,7 +79,20 @@ func main() {
 		Insecure: env("NOVAMAIL_SMARTHOST_INSECURE", "false") == "true",
 	})
 
-	w := &worker{store: bodies, db: database, provider: provider, log: logger}
+	signer, err := dkim.Load(
+		os.Getenv("NOVAMAIL_DKIM_DOMAIN"),
+		os.Getenv("NOVAMAIL_DKIM_SELECTOR"),
+		os.Getenv("NOVAMAIL_DKIM_KEY"),
+	)
+	if err != nil {
+		logger.Error("init dkim", "err", err)
+		os.Exit(1)
+	}
+	if signer != nil {
+		logger.Info("dkim signing enabled", "domain", signer.Domain())
+	}
+
+	w := &worker{store: bodies, db: database, provider: provider, signer: signer, log: logger}
 
 	// Health/metrics server.
 	go serveHealth(env("NOVAMAIL_HTTP_ADDR", ":8080"), database, bus, logger)
@@ -112,6 +126,7 @@ type worker struct {
 	store    *store.FSStore
 	db       *db.DB
 	provider providers.Provider
+	signer   *dkim.Signer
 	log      *slog.Logger
 }
 
@@ -135,9 +150,21 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 	}
 	defer func() { _ = body.Close() }()
 
+	// DKIM-sign when the signer's domain matches the sending domain.
+	var msgBody io.Reader = body
+	if w.signer != nil && w.signer.Domain() == job.RoutingHints.SenderDomain {
+		signed, serr := w.signer.Sign(body)
+		if serr != nil {
+			w.log.Error("dkim sign", "err", serr, "id", job.MessageID)
+			_ = d.Nack(false, true)
+			return
+		}
+		msgBody = signed
+	}
+
 	res, sendErr := w.provider.Send(hctx, &providers.Message{
 		Envelope: job.Envelope,
-		Body:     body,
+		Body:     msgBody,
 	})
 
 	switch res.Outcome {

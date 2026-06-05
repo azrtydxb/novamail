@@ -2,7 +2,10 @@
 // shapes here mirror the versioned JSON Schemas in /api — keep them in sync.
 package model
 
-import "time"
+import (
+	"slices"
+	"time"
+)
 
 // Status values for a message (mirrors the messages.status CHECK in migrations).
 const (
@@ -46,3 +49,20 @@ type RelayJob struct {
 
 // RelayJobVersion is the current schema version.
 const RelayJobVersion = 1
+
+// Account is a relay client (row in the accounts table). Credentials are
+// validated by the data layer; PasswordHash never leaves the db package.
+type Account struct {
+	ID                   string
+	Username             string
+	AllowedSenderDomains []string
+}
+
+// AllowsSender reports whether this account may use the given sender domain.
+// An empty AllowedSenderDomains means "any" (single-tenant convenience).
+func (a *Account) AllowsSender(domain string) bool {
+	if len(a.AllowedSenderDomains) == 0 {
+		return true
+	}
+	return slices.Contains(a.AllowedSenderDomains, domain)
+}
