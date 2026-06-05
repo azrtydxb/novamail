@@ -9,10 +9,12 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -32,20 +34,30 @@ import (
 // config is the bootstrap config (env/flags only; operational config is in
 // Postgres per the spec). Just enough to start and reach dependencies.
 type config struct {
-	smtpAddr  string
-	httpAddr  string
-	bodyStore string
-	dsn       string
-	amqpURL   string
+	plainAddr      string // plaintext submission (dev/in-cluster); no AUTH unless insecure
+	submissionAddr string // STARTTLS submission (RFC 6409, exposed as 587)
+	implicitAddr   string // implicit TLS (exposed as 465)
+	httpAddr       string
+	bodyStore      string
+	dsn            string
+	amqpURL        string
+	tlsCert        string
+	tlsKey         string
+	insecureAuth   bool // allow AUTH without TLS (dev only)
 }
 
 func loadConfig() config {
 	return config{
-		smtpAddr:  env("NOVAMAIL_SMTP_ADDR", ":2525"),
-		httpAddr:  env("NOVAMAIL_HTTP_ADDR", ":8080"),
-		bodyStore: env("NOVAMAIL_BODY_STORE", "/var/lib/novamail/bodies"),
-		dsn:       os.Getenv("DSN"),
-		amqpURL:   os.Getenv("AMQP_URL"),
+		plainAddr:      env("NOVAMAIL_SMTP_ADDR", ":2525"),
+		submissionAddr: env("NOVAMAIL_SUBMISSION_ADDR", ":2587"),
+		implicitAddr:   env("NOVAMAIL_IMPLICIT_ADDR", ":2465"),
+		httpAddr:       env("NOVAMAIL_HTTP_ADDR", ":8080"),
+		bodyStore:      env("NOVAMAIL_BODY_STORE", "/var/lib/novamail/bodies"),
+		dsn:            os.Getenv("DSN"),
+		amqpURL:        os.Getenv("AMQP_URL"),
+		tlsCert:        os.Getenv("NOVAMAIL_TLS_CERT"),
+		tlsKey:         os.Getenv("NOVAMAIL_TLS_KEY"),
+		insecureAuth:   env("NOVAMAIL_INSECURE_AUTH", "false") == "true",
 	}
 }
 
@@ -96,12 +108,27 @@ func main() {
 
 	be := &backend{store: bodies, db: database, bus: bus, log: logger}
 	smtpSrv := smtp.NewServer(be)
-	smtpSrv.Addr = cfg.smtpAddr
 	smtpSrv.Domain = env("NOVAMAIL_HOSTNAME", "novamail.local")
 	smtpSrv.ReadTimeout = 60 * time.Second
 	smtpSrv.WriteTimeout = 60 * time.Second
 	smtpSrv.MaxMessageBytes = 50 << 20 // 50 MiB
-	smtpSrv.AllowInsecureAuth = true   // M0 only; TLS + AUTH enforced in M1
+
+	// TLS: when a cert is mounted, AUTH is only offered after TLS (STARTTLS) or
+	// on the implicit-TLS port. Without a cert (dev), allow insecure AUTH only
+	// if explicitly opted in.
+	var tlsCfg *tls.Config
+	if cfg.tlsCert != "" && cfg.tlsKey != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.tlsCert, cfg.tlsKey)
+		if err != nil {
+			logger.Error("load tls keypair", "err", err)
+			os.Exit(1)
+		}
+		tlsCfg = &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS12}
+		smtpSrv.TLSConfig = tlsCfg
+		smtpSrv.AllowInsecureAuth = false
+	} else {
+		smtpSrv.AllowInsecureAuth = cfg.insecureAuth
+	}
 
 	ready := &atomicBool{}
 	httpSrv := &http.Server{Addr: cfg.httpAddr, Handler: healthMux(ready, database, bus)}
@@ -109,13 +136,41 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	go func() {
-		logger.Info("smtp listening", "addr", cfg.smtpAddr)
-		if err := smtpSrv.ListenAndServe(); err != nil && !errors.Is(err, smtp.ErrServerClosed) {
-			logger.Error("smtp server", "err", err)
+	serve := func(name, addr string, l net.Listener) {
+		logger.Info("smtp listening", "listener", name, "addr", addr)
+		if err := smtpSrv.Serve(l); err != nil && !errors.Is(err, smtp.ErrServerClosed) {
+			logger.Error("smtp server", "listener", name, "err", err)
 			stop()
 		}
-	}()
+	}
+
+	// Plaintext submission (in-cluster/dev). AUTH here requires insecureAuth.
+	if cfg.plainAddr != "" {
+		l, err := net.Listen("tcp", cfg.plainAddr)
+		if err != nil {
+			logger.Error("listen plain", "err", err)
+			os.Exit(1)
+		}
+		go serve("plain", cfg.plainAddr, l)
+	}
+	if tlsCfg != nil {
+		// STARTTLS submission (587).
+		l, err := net.Listen("tcp", cfg.submissionAddr)
+		if err != nil {
+			logger.Error("listen submission", "err", err)
+			os.Exit(1)
+		}
+		go serve("submission-starttls", cfg.submissionAddr, l)
+
+		// Implicit TLS (465).
+		il, err := tls.Listen("tcp", cfg.implicitAddr, tlsCfg)
+		if err != nil {
+			logger.Error("listen implicit-tls", "err", err)
+			os.Exit(1)
+		}
+		go serve("implicit-tls", cfg.implicitAddr, il)
+	}
+
 	go func() {
 		logger.Info("http listening", "addr", cfg.httpAddr)
 		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {

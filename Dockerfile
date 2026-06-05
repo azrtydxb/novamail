@@ -1,7 +1,7 @@
 # Multi-stage, multi-arch (arm64 on kw, amd64 supported), distroless, non-root.
 # Build a single data-plane service via the SERVICE build-arg:
 #   docker build --build-arg SERVICE=ingress .
-ARG GO_VERSION=1.23
+ARG GO_VERSION=1.25
 
 FROM --platform=$BUILDPLATFORM golang:${GO_VERSION} AS build
 ARG SERVICE=ingress

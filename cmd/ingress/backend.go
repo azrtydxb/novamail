@@ -8,6 +8,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/emersion/go-sasl"
 	"github.com/emersion/go-smtp"
 
 	"github.com/azrtydxb/novamail/internal/amqp"
@@ -32,11 +33,37 @@ func (b *backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
 
 type session struct {
 	be    *backend
+	auth  *model.Account
 	from  string
 	rcpts []string
 }
 
+// AuthMechanisms advertises PLAIN (offered only after TLS; see AllowInsecureAuth).
+func (s *session) AuthMechanisms() []string { return []string{sasl.Plain} }
+
+// Auth validates credentials against the accounts table and binds the account
+// to the session.
+func (s *session) Auth(string) (sasl.Server, error) {
+	return sasl.NewPlainServer(func(_, username, password string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		acc, err := s.be.db.Authenticate(ctx, username, password)
+		if err != nil {
+			s.be.log.Warn("auth failed", "username", username)
+			return smtp.ErrAuthFailed
+		}
+		s.auth = acc
+		return nil
+	}), nil
+}
+
 func (s *session) Mail(from string, _ *smtp.MailOptions) error {
+	if s.auth == nil {
+		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Authentication required"}
+	}
+	if !s.auth.AllowsSender(domainOf([]string{from})) {
+		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "Sender domain not permitted for this account"}
+	}
 	s.from = from
 	return nil
 }
