@@ -46,9 +46,9 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [~] RabbitMQ 3-node quorum cluster (TODO); graceful drain on shutdown (done).
 
 ## M3 — Providers + routing
-- [ ] Providers: Gmail/XOAUTH2 (token refresh), Amazon SES, Microsoft 365.
-- [ ] Routing engine: recipient-domain → sender-domain → default; per-rule enable + failover chains.
-- [ ] Per-domain rate limiting (consumer prefetch/QoS + token budget).
+- [x] Providers: Gmail/XOAUTH2 (token refresh), Amazon SES, Microsoft 365 (factory; live creds via M4 secret store).
+- [x] Routing engine: recipient-domain → sender-domain → default; per-rule enable + failover chains (DB-driven).
+- [ ] Per-domain rate limiting (consumer prefetch/QoS + token budget). [remaining M3]
 
 ## M4 — Management plane
 - [ ] `services/admin-api` (Fastify + TS): REST over Postgres config schema, validation, `config.changed` fanout publish.

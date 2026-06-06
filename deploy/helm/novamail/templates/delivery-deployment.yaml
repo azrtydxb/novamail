@@ -37,12 +37,6 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
-            - name: NOVAMAIL_SMARTHOST_ADDR
-              value: {{ .Values.delivery.smarthost.addr | quote }}
-            - name: NOVAMAIL_SMARTHOST_TLS
-              value: {{ .Values.delivery.smarthost.tls | quote }}
-            - name: NOVAMAIL_SMARTHOST_INSECURE
-              value: {{ .Values.delivery.smarthost.insecure | quote }}
             {{- if .Values.delivery.dkim.enabled }}
             - name: NOVAMAIL_DKIM_DOMAIN
               value: {{ .Values.delivery.dkim.domain | quote }}
@@ -69,6 +63,11 @@ spec:
               mountPath: {{ .Values.delivery.dkim.mountPath }}
               readOnly: true
             {{- end }}
+            {{- if .Values.delivery.providerSecrets.enabled }}
+            - name: provider-secrets
+              mountPath: {{ .Values.delivery.providerSecrets.mountPath }}
+              readOnly: true
+            {{- end }}
       volumes:
         - name: bodies
           {{- if .Values.bodyStore.enabled }}
@@ -81,4 +80,9 @@ spec:
         - name: dkim
           secret:
             secretName: {{ .Values.delivery.dkim.secretName }}
+        {{- end }}
+        {{- if .Values.delivery.providerSecrets.enabled }}
+        - name: provider-secrets
+          secret:
+            secretName: {{ .Values.delivery.providerSecrets.secretName }}
         {{- end }}
