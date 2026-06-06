@@ -39,6 +39,9 @@ spec:
   selector:
     {{- include "novamail.ingress.selectorLabels" . | nindent 4 }}
   ports:
+    - name: smtp
+      port: 25
+      targetPort: smtp
     {{- if .Values.tls.enabled }}
     - name: submission
       port: 587

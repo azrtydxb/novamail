@@ -107,6 +107,17 @@ func main() {
 	defer func() { _ = bus.Close() }()
 
 	be := &backend{store: bodies, db: database, bus: bus, log: logger}
+	be.policy.Store(buildInbound(initCtx, database, logger))
+	// Hot-reload the inbound authorization policy on config.changed.
+	if err := bus.SubscribeConfig(func(_ []byte) {
+		rctx, rcancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer rcancel()
+		be.policy.Store(buildInbound(rctx, database, logger))
+		logger.Info("inbound policy reloaded (config.changed)")
+	}); err != nil {
+		logger.Error("subscribe config.changed", "err", err)
+		os.Exit(1)
+	}
 	smtpSrv := smtp.NewServer(be)
 	smtpSrv.Domain = env("NOVAMAIL_HOSTNAME", "novamail.local")
 	smtpSrv.ReadTimeout = 60 * time.Second
