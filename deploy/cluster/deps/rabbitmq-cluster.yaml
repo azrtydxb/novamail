@@ -1,0 +1,27 @@
+# 3-node RabbitMQ quorum cluster (spec §6) via the RabbitMQ Cluster Operator —
+# far more reliable than hand-rolled StatefulSet clustering. Replaces the
+# single-node deploy/cluster/deps/rabbitmq.yaml. The operator creates a
+# StatefulSet, a client Service named `nova-bus`, and a `nova-bus-default-user`
+# Secret (host/username/password) for AMQP access.
+apiVersion: rabbitmq.com/v1beta1
+kind: RabbitmqCluster
+metadata:
+  name: nova-bus
+  namespace: novamail
+spec:
+  replicas: 3
+  image: rabbitmq:4-management
+  persistence:
+    storageClassName: longhorn
+    storage: 5Gi
+  resources:
+    requests:
+      cpu: 100m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+  rabbitmq:
+    additionalConfig: |
+      default_queue_type = quorum
+      cluster_partition_handling = pause_minority
