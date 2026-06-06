@@ -1,7 +1,7 @@
 // NovaMail data store — replaces the prototype's mock data.jsx with the real
 // Fastify Admin API. It maps API resources to the prototype's NM_DATA shapes so
 // the screens stay byte-identical, and exposes window.Store for CRUD/telemetry.
-import { api } from '../api.ts';
+import { api, setToken, hasToken } from '../api.ts';
 
 export const PROVIDER_TYPE_LABEL = {
   ses: 'Amazon SES', m365: 'Microsoft 365', gmail: 'Gmail / XOAUTH2', smtp: 'Generic SMTP',
@@ -23,6 +23,7 @@ const NM_DATA = {
   METRICS: { relayed24h: 0, deferred24h: 0, bounced24h: 0, acceptRate: 100, queueDepth: 0, p50Latency: 0, p95Latency: 0, dkimSigned: 100 },
   PROVIDERS: [], ROUTING_RULES: [], RELAY_DOMAINS: [], RATE_LIMITS: [], ACCOUNTS: [],
   MESSAGES: [], QUEUES: [], PROVIDER_TYPE_LABEL,
+  RELAY_CLIENTS: [], SUPPRESSIONS: [], AUDIT: [], OPERATORS: [], DKIM_KEYS: [], SETTINGS: {},
 };
 window.NM_DATA = NM_DATA;
 
@@ -58,7 +59,7 @@ function mapRate(r) {
   return { id: r.id, domain: r.scope_value, direction: r.direction, scope: r.scope, per_second: r.per_second, burst: r.burst, enabled: r.enabled, usage: 0, note: r.scope_value === '*' ? 'default' : undefined };
 }
 function mapAccount(a) {
-  return { id: a.id, username: a.username, allowed_sender_domains: a.allowed_sender_domains || [], enabled: a.enabled !== false, lastAuth: '—', sent24h: 0 };
+  return { id: a.id, username: a.username, allowed_sender_domains: a.allowed_sender_domains || [], ip_allowlist: a.ip_allowlist || [], enabled: a.enabled !== false, lastAuth: '—', sent24h: 0 };
 }
 
 async function loadMessages() {
@@ -88,6 +89,15 @@ async function loadAll() {
     api('/accounts').catch(() => []),
     loadMessages().catch(() => []),
   ]);
+  // Management-plane resources (best-effort; absent endpoints leave [] defaults).
+  const [relayClients, suppressions, audit, operators, settings] = await Promise.all([
+    api('/relay-clients').catch(() => []),
+    api('/suppressions').catch(() => []),
+    api('/audit?limit=200').catch(() => []),
+    api('/operators').catch(() => []),
+    api('/settings').catch(() => []),
+  ]);
+
   let metrics = null, queues = [];
   try { metrics = await api('/metrics'); } catch { /* telemetry optional */ }
   try { queues = await api('/queues'); } catch { /* */ }
@@ -100,6 +110,12 @@ async function loadAll() {
   NM_DATA.ACCOUNTS = accounts.map(mapAccount);
   NM_DATA.MESSAGES = messages;
   NM_DATA.QUEUES = queues;
+  NM_DATA.RELAY_CLIENTS = (relayClients || []).map((c) => ({ id: c.id, cidr: c.cidr, description: c.description || '', allowed_sender_domains: c.allowed_sender_domains || [], enabled: c.enabled !== false }));
+  NM_DATA.SUPPRESSIONS = (suppressions || []).map((s) => ({ address: s.address, reason: s.reason, source: s.source || '—', created_at: s.created_at }));
+  NM_DATA.AUDIT = (audit || []).map((a) => ({ id: a.id, actor: a.actor, action: a.action, target: a.target || '', at: a.at }));
+  NM_DATA.OPERATORS = (operators || []).map((o) => ({ id: o.id, username: o.username, role: o.role, enabled: o.enabled !== false }));
+  NM_DATA.DKIM_KEYS = (dkim || []).map((k) => ({ id: k.id, domain: k.domain, selector: k.selector, rotation: k.rotation || 'active' }));
+  NM_DATA.SETTINGS = Object.fromEntries((settings || []).map((s) => [s.key, s.value]));
   if (metrics) {
     NM_DATA.METRICS = { ...NM_DATA.METRICS, ...metrics.metrics };
     NM_DATA.SERIES = { ...NM_DATA.SERIES, ...metrics.series };
@@ -122,15 +138,25 @@ async function save(coll, f, item) {
     const body = { direction: f.direction || 'out', scope: f.scope || 'recipient_domain', scope_value: f.domain, per_second: Number(f.per_second), burst: Number(f.burst), enabled: !!f.enabled };
     item ? await api(`/rate-limits/${item.id}`, { method: 'PUT', body }) : await api('/rate-limits', { method: 'POST', body });
   } else if (coll === 'accounts') {
-    if (!item) await api('/accounts', { method: 'POST', body: { username: f.username, password: f.password, allowed_sender_domains: f.allowed_sender_domains } });
-    else await api(`/accounts/${item.id}`, { method: 'PUT', body: { allowed_sender_domains: f.allowed_sender_domains, enabled: !!f.enabled, ...(f.password ? { password: f.password } : {}) } });
+    if (!item) await api('/accounts', { method: 'POST', body: { username: f.username, password: f.password, allowed_sender_domains: f.allowed_sender_domains, ip_allowlist: f.ip_allowlist || [] } });
+    else await api(`/accounts/${item.id}`, { method: 'PUT', body: { allowed_sender_domains: f.allowed_sender_domains, ip_allowlist: f.ip_allowlist || [], enabled: !!f.enabled, ...(f.password ? { password: f.password } : {}) } });
+  } else if (coll === 'relayclients') {
+    const body = { cidr: f.cidr, description: f.description || '', allowed_sender_domains: f.allowed_sender_domains || [], enabled: !!f.enabled };
+    item ? await api(`/relay-clients/${item.id}`, { method: 'PUT', body }) : await api('/relay-clients', { method: 'POST', body });
+  } else if (coll === 'suppressions') {
+    await api('/suppressions', { method: 'POST', body: { address: f.address, reason: f.reason || 'manual' } });
+  } else if (coll === 'operators') {
+    await api('/operators', { method: 'POST', body: { username: f.username, password: f.password, role: f.role || 'admin' } });
   }
   await loadAll();
 }
 
 async function remove(coll, item) {
-  const path = { providers: 'providers', rules: 'routing-rules', domains: 'relay-domains', ratelimits: 'rate-limits', accounts: 'accounts' }[coll];
-  const id = coll === 'domains' ? encodeURIComponent(item.domain) : (item.id || encodeURIComponent(item.domain));
+  const path = { providers: 'providers', rules: 'routing-rules', domains: 'relay-domains', ratelimits: 'rate-limits', accounts: 'accounts', relayclients: 'relay-clients', suppressions: 'suppressions', operators: 'operators', dkim: 'dkim-keys' }[coll];
+  let id;
+  if (coll === 'domains') id = encodeURIComponent(item.domain);
+  else if (coll === 'suppressions') id = encodeURIComponent(item.address);
+  else id = item.id || encodeURIComponent(item.domain);
   await api(`/${path}/${id}`, { method: 'DELETE' });
   await loadAll();
 }
@@ -142,6 +168,7 @@ async function toggle(coll, item) {
     else if (coll === 'ratelimits') await api(`/rate-limits/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
     else if (coll === 'domains') await api(`/relay-domains/${encodeURIComponent(item.domain)}`, { method: 'PUT', body: { enabled: !item.enabled } });
     else if (coll === 'accounts') await api(`/accounts/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
+    else if (coll === 'relayclients') await api(`/relay-clients/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
   } catch (e) {
     window.nmToast && window.nmToast(String(e.message || e), 'danger');
   }
@@ -178,5 +205,24 @@ async function refreshLight() {
   } catch { /* */ }
 }
 
-window.Store = { loadAll, refreshLight, save, remove, toggle };
+// ---- auth ----
+async function login(username, password) {
+  const res = await api('/auth/login', { method: 'POST', body: { username, password } });
+  setToken(res.token);
+  NM_DATA.OPERATOR = { username: res.username, role: res.role };
+  return res;
+}
+function logout() { setToken(null); NM_DATA.OPERATOR = null; }
+
+// ---- one-off actions ----
+async function generateDKIM(domain, selector) {
+  const res = await api('/dkim-keys/generate', { method: 'POST', body: { domain, selector } });
+  await loadAll();
+  return res; // { dns: { name, type, value } }
+}
+async function purgeQueue(name) { await api(`/queues/${encodeURIComponent(name)}/purge`, { method: 'POST' }); await refreshLight(); }
+async function requeueMessage(id) { await api(`/messages/${id}/requeue`, { method: 'POST' }); await refreshLight(); }
+async function saveSetting(key, value) { await api(`/settings/${encodeURIComponent(key)}`, { method: 'PUT', body: { value } }); await loadAll(); }
+
+window.Store = { loadAll, refreshLight, save, remove, toggle, login, logout, generateDKIM, purgeQueue, requeueMessage, saveSetting, hasToken };
 export const Store = window.Store;

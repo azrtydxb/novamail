@@ -48,7 +48,7 @@ function QueueMonitor({ live }) {
       <PageHeader icon={<I.Layers size={18} />} eyebrow="data plane" title="Queue monitor" sub="RabbitMQ 4.x · quorum queues · 3-node cluster"
         actions={<>
           <Btn icon={paused ? <I.Play size={12} /> : <I.Pause size={12} />} size="sm" onClick={() => setPaused(p => !p)}>{paused ? 'resume' : 'pause'} stream</Btn>
-          <Btn icon={<I.Refresh size={13} />} size="sm" onClick={() => window.nmToast && window.nmToast('Dead-letter queue purged', 'danger')}>purge dlq</Btn>
+          <Btn icon={<I.Refresh size={13} />} size="sm" onClick={() => window.Store.purgeQueue('relay.dlq').then(() => window.nmToast('Dead-letter queue purged', 'danger')).catch((e) => window.nmToast(String(e.message || e), 'danger'))}>purge dlq</Btn>
         </>} />
       <ScreenBody>
         {/* summary strip */}

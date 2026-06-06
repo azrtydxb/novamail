@@ -13,11 +13,15 @@ function useDataVersion() {
   }, []);
 }
 const COLL = {
-  providers:  { arr: 'PROVIDERS',     pk: 'id',     label: 'provider' },
-  rules:      { arr: 'ROUTING_RULES', pk: 'id',     label: 'routing rule' },
-  domains:    { arr: 'RELAY_DOMAINS', pk: 'domain', label: 'relay domain' },
-  ratelimits: { arr: 'RATE_LIMITS',   pk: 'domain', label: 'rate limit' },
-  accounts:   { arr: 'ACCOUNTS',      pk: 'id',     label: 'account' },
+  providers:    { arr: 'PROVIDERS',     pk: 'id',       label: 'provider' },
+  rules:        { arr: 'ROUTING_RULES', pk: 'id',       label: 'routing rule' },
+  domains:      { arr: 'RELAY_DOMAINS', pk: 'domain',   label: 'relay domain' },
+  ratelimits:   { arr: 'RATE_LIMITS',   pk: 'domain',   label: 'rate limit' },
+  accounts:     { arr: 'ACCOUNTS',      pk: 'id',       label: 'account' },
+  relayclients: { arr: 'RELAY_CLIENTS', pk: 'cidr',     label: 'relay client' },
+  suppressions: { arr: 'SUPPRESSIONS',  pk: 'address',  label: 'suppression' },
+  operators:    { arr: 'OPERATORS',     pk: 'username', label: 'operator' },
+  dkim:         { arr: 'DKIM_KEYS',     pk: 'selector', label: 'DKIM key' },
 };
 const uid = (p) => p + '_' + Math.random().toString(36).slice(2, 8);
 
@@ -248,25 +252,38 @@ function DomainForm({ item, onClose }) {
   );
 }
 
-function RateLimitForm({ item, onClose }) {
+const SCOPES_IN = [{ value: 'account', label: 'account (username key)' }, { value: 'ip', label: 'source IP/CIDR' }, { value: 'global', label: 'global (all inbound)' }];
+const SCOPES_OUT = [{ value: 'recipient_domain', label: 'recipient domain' }, { value: 'provider', label: 'provider name' }, { value: 'global', label: 'global (all outbound)' }];
+function RateLimitForm({ item, preset, onClose }) {
   const create = !item;
-  const [f, setF] = useMState(item ? { ...item } : { domain: '', per_second: 25, burst: 80, enabled: true, usage: 0 });
+  const base = preset || {};
+  const [f, setF] = useMState(item
+    ? { ...item, scope_value: item.domain === '*' ? '' : item.domain }
+    : { direction: base.direction || 'out', scope: base.scope || 'recipient_domain', domain: '', per_second: 25, burst: 80, enabled: true });
   const [tried, setTried] = useMState(false);
   const up = (k, v) => setF(s => ({ ...s, [k]: v }));
-  const invalid = { domain: !f.domain.trim() };
+  const isGlobal = f.scope === 'global';
+  const invalid = { domain: !isGlobal && !(f.domain || '').trim() };
   const save = async () => {
     setTried(true);
     if (invalid.domain) return;
-    try { await window.Store.save('ratelimits', f, item); window.nmToast(create ? 'Rate limit created' : 'Rate limit updated'); onClose(); }
+    const payload = { ...f, domain: isGlobal ? '*' : f.domain };
+    try { await window.Store.save('ratelimits', payload, item); window.nmToast(create ? 'Rate limit created' : 'Rate limit updated'); onClose(); }
     catch (e) { window.nmToast(String(e.message || e), 'danger'); }
   };
+  const inbound = f.direction === 'in';
+  const keyHint = { account: 'account username', ip: 'CIDR e.g. 10.0.0.0/8', recipient_domain: 'gmail.com', provider: 'provider name', global: 'n/a' }[f.scope];
   return (
-    <ModalShell eyebrow="routing" title={create ? 'New rate limit' : 'Edit rate limit'} icon={<I.Gauge size={17} />} onClose={onClose}
+    <ModalShell eyebrow={inbound ? 'incoming' : 'outgoing'} title={create ? 'New rate limit' : 'Edit rate limit'} icon={<I.Gauge size={17} />} onClose={onClose}
       footer={<><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Check size={13} />} onClick={save}>{create ? 'create limit' : 'save changes'}</Btn></>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <FRow label="recipient domain" hint="* = default bucket" error={tried && invalid.domain ? 'required' : null}><FText value={f.domain} onChange={v => up('domain', v)} placeholder="gmail.com" invalid={tried && invalid.domain} /></FRow>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <FRow label="per second" hint="sustained rate"><FNumber value={f.per_second} onChange={v => up('per_second', v)} min={1} /></FRow>
+          <FRow label="direction"><FSelect value={f.direction} onChange={v => { up('direction', v); up('scope', v === 'in' ? 'account' : 'recipient_domain'); }} options={[{ value: 'in', label: 'inbound (submit)' }, { value: 'out', label: 'outbound (deliver)' }]} /></FRow>
+          <FRow label="scope"><FSelect value={f.scope} onChange={v => up('scope', v)} options={inbound ? SCOPES_IN : SCOPES_OUT} /></FRow>
+        </div>
+        {!isGlobal && <FRow label="key" hint={keyHint} error={tried && invalid.domain ? 'required' : null}><FText value={f.domain} onChange={v => up('domain', v)} placeholder={keyHint} invalid={tried && invalid.domain} /></FRow>}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <FRow label="per second" hint="sustained rate"><FNumber value={f.per_second} onChange={v => up('per_second', v)} min={0} /></FRow>
           <FRow label="burst" hint="bucket size"><FNumber value={f.burst} onChange={v => up('burst', v)} min={1} /></FRow>
         </div>
         <FToggle value={f.enabled} onChange={v => up('enabled', v)} label="Enabled" />
@@ -275,9 +292,121 @@ function RateLimitForm({ item, onClose }) {
   );
 }
 
+/* ---- Relay client (trusted IP/CIDR) ---- */
+function RelayClientForm({ item, onClose }) {
+  const create = !item;
+  const [f, setF] = useMState(item ? { ...item, allowed_sender_domains: [...item.allowed_sender_domains] } : { cidr: '', description: '', allowed_sender_domains: [], enabled: true });
+  const [tried, setTried] = useMState(false);
+  const up = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const invalid = { cidr: !(f.cidr || '').trim() };
+  const save = async () => {
+    setTried(true);
+    if (invalid.cidr) return;
+    try { await window.Store.save('relayclients', f, item); window.nmToast(create ? 'Relay client added' : 'Relay client updated'); onClose(); }
+    catch (e) { window.nmToast(String(e.message || e), 'danger'); }
+  };
+  return (
+    <ModalShell eyebrow="incoming" title={create ? 'Add relay client' : 'Edit relay client'} icon={<I.Globe size={17} />} onClose={onClose} width={500}
+      footer={<><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Check size={13} />} onClick={save}>{create ? 'add range' : 'save changes'}</Btn></>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <FRow label="source range (CIDR)" hint="hosts here relay without AUTH" error={tried && invalid.cidr ? 'required' : null}><FText value={f.cidr} onChange={v => up('cidr', v)} placeholder="10.0.0.0/24 or 203.0.113.5/32" invalid={tried && invalid.cidr} /></FRow>
+        <FRow label="description"><FText value={f.description} onChange={v => up('description', v)} placeholder="app servers" mono={false} /></FRow>
+        <FRow label="allowed sender domains" hint="empty = any · enter to add"><FChips values={f.allowed_sender_domains} onChange={v => up('allowed_sender_domains', v)} placeholder="watteel.com" /></FRow>
+        <FToggle value={f.enabled} onChange={v => up('enabled', v)} label="Enabled" />
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ---- Suppression (manual add) ---- */
+function SuppressionForm({ onClose }) {
+  const [f, setF] = useMState({ address: '', reason: 'manual' });
+  const [tried, setTried] = useMState(false);
+  const up = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const invalid = { address: !/.+@.+/.test(f.address) };
+  const save = async () => {
+    setTried(true);
+    if (invalid.address) return;
+    try { await window.Store.save('suppressions', f); window.nmToast('Address suppressed'); onClose(); }
+    catch (e) { window.nmToast(String(e.message || e), 'danger'); }
+  };
+  return (
+    <ModalShell eyebrow="observe" title="Suppress address" icon={<I.Ban size={17} />} onClose={onClose} width={440}
+      footer={<><Btn onClick={onClose}>cancel</Btn><Btn danger icon={<I.Check size={13} />} onClick={save}>suppress</Btn></>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <FRow label="address" error={tried && invalid.address ? 'valid email required' : null}><FText value={f.address} onChange={v => up('address', v)} placeholder="bounced@example.com" invalid={tried && invalid.address} /></FRow>
+        <FRow label="reason"><FSelect value={f.reason} onChange={v => up('reason', v)} options={['manual', 'hard_bounce', 'complaint']} /></FRow>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ---- Operator ---- */
+function OperatorForm({ onClose }) {
+  const [f, setF] = useMState({ username: '', password: '', role: 'admin' });
+  const [tried, setTried] = useMState(false);
+  const up = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const invalid = { username: !f.username.trim(), pass: !f.password };
+  const save = async () => {
+    setTried(true);
+    if (invalid.username || invalid.pass) return;
+    try { await window.Store.save('operators', f); window.nmToast('Operator created'); onClose(); }
+    catch (e) { window.nmToast(String(e.message || e), 'danger'); }
+  };
+  return (
+    <ModalShell eyebrow="observe" title="New operator" icon={<I.Users size={17} />} onClose={onClose} width={440}
+      footer={<><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Check size={13} />} onClick={save}>create operator</Btn></>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <FRow label="username" error={tried && invalid.username ? 'required' : null}><FText value={f.username} onChange={v => up('username', v)} placeholder="ops@watteel.com" invalid={tried && invalid.username} /></FRow>
+        <FRow label="password" error={tried && invalid.pass ? 'required' : null}><FText type="password" value={f.password} onChange={v => up('password', v)} placeholder="••••••••••••" invalid={tried && invalid.pass} /></FRow>
+        <FRow label="role"><FSelect value={f.role} onChange={v => up('role', v)} options={['admin', 'viewer']} /></FRow>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ---- DKIM key generation ---- */
+function DKIMGen({ onClose }) {
+  const [f, setF] = useMState({ domain: '', selector: 'nova' + new Date().getFullYear() });
+  const [tried, setTried] = useMState(false);
+  const [dns, setDns] = useMState(null);
+  const [busy, setBusy] = useMState(false);
+  const up = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const invalid = { domain: !f.domain.trim(), selector: !f.selector.trim() };
+  const gen = async () => {
+    setTried(true);
+    if (invalid.domain || invalid.selector) return;
+    setBusy(true);
+    try { const res = await window.Store.generateDKIM(f.domain, f.selector); setDns(res.dns); window.nmToast('DKIM key generated'); }
+    catch (e) { window.nmToast(String(e.message || e), 'danger'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <ModalShell eyebrow="outgoing" title="Generate DKIM key" icon={<I.Shield size={17} />} onClose={onClose} width={560}
+      footer={dns ? <Btn kind="primary" onClick={onClose}>done</Btn> : <><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Shield size={13} />} onClick={gen}>{busy ? 'generating…' : 'generate'}</Btn></>}>
+      {!dns ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <FRow label="domain" error={tried && invalid.domain ? 'required' : null}><FText value={f.domain} onChange={v => up('domain', v)} placeholder="watteel.com" invalid={tried && invalid.domain} /></FRow>
+          <FRow label="selector" hint="<selector>._domainkey" error={tried && invalid.selector ? 'required' : null}><FText value={f.selector} onChange={v => up('selector', v)} invalid={tried && invalid.selector} /></FRow>
+          <div className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', lineHeight: 1.5 }}>An RSA-2048 keypair is minted; the private key is envelope-encrypted and the prior active selector for this domain is retired.</div>
+        </div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>Publish this DNS TXT record, then delivery will sign with the new key:</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>{dns.name}　(TXT)</span>
+            <textarea readOnly value={dns.value} style={{ ...fieldStyle, minHeight: 96, resize: 'vertical', fontSize: 11 }} onFocus={(e) => e.target.select()} />
+          </div>
+          <Btn size="sm" icon={<I.Copy size={12} />} onClick={() => { navigator.clipboard?.writeText(dns.value); window.nmToast('Copied'); }}>copy value</Btn>
+        </div>
+      )}
+    </ModalShell>
+  );
+}
+
 function AccountForm({ item, onClose }) {
   const create = !item;
-  const [f, setF] = useMState(item ? { ...item, password: '', allowed_sender_domains: [...item.allowed_sender_domains] } : { username: '', password: '', allowed_sender_domains: [], enabled: true });
+  const [f, setF] = useMState(item ? { ...item, password: '', allowed_sender_domains: [...item.allowed_sender_domains], ip_allowlist: [...(item.ip_allowlist || [])] } : { username: '', password: '', allowed_sender_domains: [], ip_allowlist: [], enabled: true });
   const [tried, setTried] = useMState(false);
   const up = (k, v) => setF(s => ({ ...s, [k]: v }));
   const invalid = { username: !f.username.trim(), pass: create && !f.password };
@@ -294,6 +423,7 @@ function AccountForm({ item, onClose }) {
         <FRow label="username" error={tried && invalid.username ? 'required' : null}><FText value={f.username} onChange={v => up('username', v)} placeholder="app@watteel.com" invalid={tried && invalid.username} /></FRow>
         <FRow label="password" hint={create ? 'envelope-encrypted at rest' : 'leave blank to keep current'} error={tried && invalid.pass ? 'required' : null}><FText type="password" value={f.password} onChange={v => up('password', v)} placeholder="••••••••••••" invalid={tried && invalid.pass} /></FRow>
         <FRow label="allowed sender domains" hint="enter to add"><FChips values={f.allowed_sender_domains} onChange={v => up('allowed_sender_domains', v)} placeholder="watteel.com" /></FRow>
+        <FRow label="source IP allowlist" hint="empty = any · CIDR, enter to add"><FChips values={f.ip_allowlist} onChange={v => up('ip_allowlist', v)} placeholder="10.0.0.0/8" /></FRow>
         <FToggle value={f.enabled} onChange={v => up('enabled', v)} label="Enabled — may authenticate & submit" />
       </div>
     </ModalShell>
@@ -318,7 +448,7 @@ function ConfirmDelete({ coll, item, onClose }) {
 }
 
 /* ===== modal host ===== */
-const FORMS = { providers: ProviderForm, rules: RuleForm, domains: DomainForm, ratelimits: RateLimitForm, accounts: AccountForm };
+const FORMS = { providers: ProviderForm, rules: RuleForm, domains: DomainForm, ratelimits: RateLimitForm, accounts: AccountForm, relayclients: RelayClientForm, suppressions: SuppressionForm, operators: OperatorForm };
 function ModalHost() {
   const [modal, setModal] = useMState(null);
   useMEffect(() => {
@@ -328,8 +458,9 @@ function ModalHost() {
   if (!modal) return null;
   const close = () => setModal(null);
   if (modal.kind === 'confirm') return <ConfirmDelete coll={modal.coll} item={modal.item} onClose={close} />;
+  if (modal.kind === 'dkimgen') return <DKIMGen onClose={close} />;
   const Form = FORMS[modal.coll];
-  return Form ? <Form item={modal.item} onClose={close} /> : null;
+  return Form ? <Form item={modal.item} preset={modal.preset} onClose={close} /> : null;
 }
 
 Object.assign(window, { ModalHost, ToastHost, useDataVersion, bumpData });

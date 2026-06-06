@@ -29,8 +29,26 @@ function SettingsCard({ title, children }) {
   );
 }
 
+function SettingNumber({ value, suffix, onSave }) {
+  const [v, setV] = React.useState(value);
+  React.useEffect(() => { setV(value); }, [value]);
+  const dirty = String(v) !== String(value);
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <input type="number" value={v} min={1} onChange={(e) => setV(Number(e.target.value))}
+        className="mono" style={{ width: 90, padding: '7px 9px', borderRadius: 6, background: 'var(--bg-input)', border: '1px solid var(--line)', color: 'var(--fg)', fontSize: 12.5, outline: 'none', textAlign: 'right' }} />
+      {suffix && <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)', width: 28 }}>{suffix}</span>}
+      <Btn size="sm" kind={dirty ? 'primary' : undefined} disabled={!dirty} onClick={() => onSave(v)}>save</Btn>
+    </div>
+  );
+}
+
 function Settings({ t, setTweak }) {
-  const { SERVER, METRICS } = window.NM_DATA;
+  useDataVersion();
+  const { SERVER, METRICS, SETTINGS } = window.NM_DATA;
+  const maxMiB = Math.round((Number(SETTINGS.max_message_bytes) || 52428800) / 1048576);
+  const retention = Number(SETTINGS.retention_days) || 30;
+  const saveSetting = (k, v) => window.Store.saveSetting(k, v).then(() => window.nmToast('Setting saved')).catch((e) => window.nmToast(String(e.message || e), 'danger'));
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <PageHeader icon={<I.Settings size={18} />} eyebrow="system" title="Settings" sub="appearance · server identity · security" />
@@ -90,6 +108,15 @@ function Settings({ t, setTweak }) {
             </SettingRow>
             <SettingRow label="Submission TLS" desc="STARTTLS required on the submission port" last>
               <Pill tone="good"><I.CheckCircle size={12} />enforced</Pill>
+            </SettingRow>
+          </SettingsCard>
+
+          <SettingsCard title="Operational limits">
+            <SettingRow label="Max message size" desc="Submissions over this are rejected 552 (hot-reloaded)">
+              <SettingNumber value={maxMiB} suffix="MiB" onSave={(v) => saveSetting('max_message_bytes', v * 1048576)} />
+            </SettingRow>
+            <SettingRow label="Retention" desc="Daily sweep prunes delivered/bounced messages older than this" last>
+              <SettingNumber value={retention} suffix="days" onSave={(v) => saveSetting('retention_days', v)} />
             </SettingRow>
           </SettingsCard>
         </div>

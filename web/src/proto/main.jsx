@@ -16,7 +16,9 @@ const FONT_PAIRS = {
 
 const ROUTE_TITLE = {
   dashboard: 'dashboard', messages: 'messages', queue: 'queue', providers: 'providers',
-  rules: 'routing-rules', domains: 'relay-domains', ratelimits: 'rate-limits', accounts: 'accounts', settings: 'settings',
+  rules: 'routing-rules', domains: 'relay-domains', accounts: 'accounts', settings: 'settings',
+  ratelimits_in: 'inbound-limits', ratelimits_out: 'outbound-limits', relayclients: 'relay-clients',
+  dkim: 'dkim-keys', suppressions: 'suppressions', audit: 'audit-log', operators: 'operators',
 };
 
 function usePrefs() {
@@ -70,7 +72,7 @@ function TopBar({ route, onToggleSidebar, onToggleTheme, theme, onOpenPalette })
 
 function App() {
   const [t, setTweak] = usePrefs();
-  const [authed, setAuthed] = useAppState(false);
+  const [authed, setAuthed] = useAppState(() => !!(window.Store && window.Store.hasToken && window.Store.hasToken()));
   const [route, setRoute] = useAppState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useAppState(true);
   const [paletteOpen, setPaletteOpen] = useAppState(false);
@@ -119,8 +121,14 @@ function App() {
   else if (route === 'providers') main = <Providers />;
   else if (route === 'rules') main = <RoutingRules />;
   else if (route === 'domains') main = <RelayDomains />;
-  else if (route === 'ratelimits') main = <RateLimits />;
+  else if (route === 'ratelimits_in') main = <RateLimitsIn />;
+  else if (route === 'ratelimits_out') main = <RateLimitsOut />;
   else if (route === 'accounts') main = <Accounts />;
+  else if (route === 'relayclients') main = <RelayClients />;
+  else if (route === 'dkim') main = <DKIMKeys />;
+  else if (route === 'suppressions') main = <Suppressions />;
+  else if (route === 'audit') main = <AuditLog />;
+  else if (route === 'operators') main = <Operators />;
   else if (route === 'settings') main = <Settings t={t} setTweak={setTweak} />;
 
   return (

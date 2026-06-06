@@ -84,7 +84,7 @@ export function registerRoutes(app: FastifyInstance): void {
   // Accounts: passwords are hashed here; the hash is never returned.
   app.get("/api/accounts", async () => {
     const { rows } = await pool.query(
-      "SELECT id, username, allowed_sender_domains, ip_allowlist, enabled, created_at FROM accounts ORDER BY username",
+      "SELECT id, username, allowed_sender_domains, array(SELECT host(network(x))||'/'||masklen(x) FROM unnest(ip_allowlist) x) AS ip_allowlist, enabled, created_at FROM accounts ORDER BY username",
     );
     return rows;
   });
@@ -104,10 +104,11 @@ export function registerRoutes(app: FastifyInstance): void {
 
   app.put("/api/accounts/:id", async (req, reply) => {
     const id = (req.params as { id: string }).id;
-    const b = req.body as { allowed_sender_domains?: string[]; enabled?: boolean; password?: string };
+    const b = req.body as { allowed_sender_domains?: string[]; ip_allowlist?: string[]; enabled?: boolean; password?: string };
     const sets: string[] = [];
     const vals: unknown[] = [];
     if (b.allowed_sender_domains !== undefined) { vals.push(b.allowed_sender_domains); sets.push(`allowed_sender_domains=$${vals.length}`); }
+    if (b.ip_allowlist !== undefined) { vals.push(b.ip_allowlist); sets.push(`ip_allowlist=$${vals.length}`); }
     if (b.enabled !== undefined) { vals.push(b.enabled); sets.push(`enabled=$${vals.length}`); }
     if (b.password) { vals.push(await bcrypt.hash(b.password, 10)); sets.push(`password_hash=$${vals.length}`); }
     if (sets.length === 0) return reply.code(400).send({ error: "no writable fields" });
