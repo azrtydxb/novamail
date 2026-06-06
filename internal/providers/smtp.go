@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"net"
 
 	"github.com/emersion/go-sasl"
 	"github.com/emersion/go-smtp"
@@ -34,21 +35,42 @@ func NewSMTP(cfg SMTPConfig) *SMTPProvider {
 
 func (p *SMTPProvider) Name() string { return p.cfg.Name }
 
-func (p *SMTPProvider) dial() (*smtp.Client, error) {
+// dial establishes the SMTP client honoring the context deadline (a black-holed
+// smarthost must not hang past the per-message timeout) and sets a connection
+// deadline so the whole MAIL/RCPT/DATA exchange is bounded.
+func (p *SMTPProvider) dial(ctx context.Context) (*smtp.Client, error) {
 	tlsCfg := &tls.Config{ServerName: hostOnly(p.cfg.Addr), InsecureSkipVerify: p.cfg.Insecure} //nolint:gosec // lab smarthosts may be self-signed; gated by config
-	switch p.cfg.TLSMode {
-	case "implicit":
-		return smtp.DialTLS(p.cfg.Addr, tlsCfg)
-	case "starttls":
-		return smtp.DialStartTLS(p.cfg.Addr, tlsCfg)
-	default:
-		return smtp.Dial(p.cfg.Addr)
+	nd := &net.Dialer{}
+	if dl, ok := ctx.Deadline(); ok {
+		nd.Deadline = dl
 	}
+	var conn net.Conn
+	var err error
+	if p.cfg.TLSMode == "implicit" {
+		conn, err = (&tls.Dialer{NetDialer: nd, Config: tlsCfg}).DialContext(ctx, "tcp", p.cfg.Addr)
+	} else {
+		conn, err = nd.DialContext(ctx, "tcp", p.cfg.Addr)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		_ = conn.SetDeadline(dl)
+	}
+	if p.cfg.TLSMode == "starttls" {
+		return smtp.NewClientStartTLS(conn, tlsCfg)
+	}
+	return smtp.NewClient(conn), nil
 }
 
 // Send relays the message and maps the upstream reply to an Outcome.
 func (p *SMTPProvider) Send(ctx context.Context, m *Message) (Result, error) {
-	c, err := p.dial()
+	// Never send credentials in cleartext: refuse PLAIN auth without TLS.
+	if p.cfg.Username != "" && p.cfg.TLSMode == "none" {
+		return Result{Outcome: Fail, Detail: "refusing PLAIN auth over a non-TLS connection"},
+			fmt.Errorf("provider %s: PLAIN auth requires TLS (starttls/implicit)", p.cfg.Name)
+	}
+	c, err := p.dial(ctx)
 	if err != nil {
 		return Result{Outcome: Defer, Detail: err.Error()}, fmt.Errorf("dial %s: %w", p.cfg.Addr, err)
 	}
