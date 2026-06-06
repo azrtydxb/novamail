@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NovaMail — cloud-native SMTP relay</title>
+  <meta name="description" content="A cloud-native, horizontally-scalable SMTP relay with a management GUI. Authenticated submission, DB-routed/failover delivery, DKIM, retry tiers, bounces, rate limits — on Kubernetes, Docker, or bare metal." />
+  <style>
+    :root{--bg:#0d0e12;--bg1:#15171d;--bg2:#1d2027;--line:#2a2e37;--fg:#e8eaed;--fg2:#aeb4bf;--fg3:#7d828c;--accent:#9b6cf3;--good:#5fce99;--mono:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;--sans:'Inter',ui-sans-serif,system-ui,sans-serif}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.6}
+    a{color:var(--accent);text-decoration:none}a:hover{text-decoration:underline}
+    .wrap{max-width:960px;margin:0 auto;padding:0 22px}
+    header{padding:64px 0 40px;text-align:center}
+    .logo{font-family:var(--mono);font-size:30px;font-weight:600;letter-spacing:.5px}
+    .logo span{color:var(--accent)}
+    .tag{color:var(--fg2);font-size:18px;margin-top:10px}
+    .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+    .pills{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin-top:22px}
+    .pill{font-family:var(--mono);font-size:12px;color:var(--fg2);background:var(--bg1);border:1px solid var(--line);border-radius:999px;padding:5px 12px}
+    h2{font-family:var(--mono);font-size:13px;letter-spacing:.1em;text-transform:uppercase;color:var(--fg3);border-bottom:1px solid var(--line);padding-bottom:8px;margin:48px 0 18px}
+    img.shot{width:100%;border:1px solid var(--line);border-radius:10px;display:block;box-shadow:0 8px 30px rgba(0,0,0,.4);margin:14px 0}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:14px}
+    .card{background:var(--bg1);border:1px solid var(--line);border-radius:10px;padding:16px}
+    .card h3{margin:0 0 6px;font-size:15px}
+    .card p{margin:0;color:var(--fg2);font-size:13.5px}
+    code{font-family:var(--mono);background:var(--bg2);padding:1px 6px;border-radius:5px;font-size:13px}
+    pre{background:var(--bg1);border:1px solid var(--line);border-radius:10px;padding:16px;overflow:auto;font-family:var(--mono);font-size:13px;color:var(--fg2)}
+    .twocol{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:640px){.twocol{grid-template-columns:1fr}}
+    footer{color:var(--fg3);font-size:13px;text-align:center;padding:48px 0;border-top:1px solid var(--line);margin-top:56px}
+    ul.flow{list-style:none;padding:0;font-family:var(--mono);font-size:13px;color:var(--fg2)}
+    ul.flow li{padding:4px 0}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="wrap">
+      <div class="logo">nova<span>mail</span></div>
+      <div class="tag">A cloud-native, horizontally-scalable <strong>SMTP relay</strong> with a management GUI.</div>
+      <div class="pills">
+        <span class="pill">Go data plane</span>
+        <span class="pill">RabbitMQ 4.x quorum</span>
+        <span class="pill">HA Postgres (CloudNativePG)</span>
+        <span class="pill">DKIM</span>
+        <span class="pill">better-auth + RBAC</span>
+        <span class="pill">Helm · Compose · systemd</span>
+        <span class="pill">multi-arch arm64/amd64</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <p>Clients submit mail; the relay authorizes, queues, DKIM-signs, and forwards each message
+    through a pluggable, authenticated upstream provider (Gmail/Workspace XOAUTH2, Amazon SES,
+    Microsoft 365, or a generic SMTP smarthost). Two decoupled planes: a React + Fastify
+    <strong>management plane</strong> for config, and a Go <strong>data plane</strong> that keeps
+    relaying even during brief control-plane outages.</p>
+
+    <h2>The console</h2>
+    <img class="shot" src="./img/dashboard.png" alt="NovaMail dashboard" />
+    <div class="twocol">
+      <img class="shot" src="./img/relay-clients.png" alt="Relay clients (Incoming)" />
+      <img class="shot" src="./img/queue.png" alt="Queue monitor" />
+    </div>
+    <div class="twocol">
+      <img class="shot" src="./img/audit.png" alt="Audit log" />
+      <img class="shot" src="./img/login.png" alt="Operator login" />
+    </div>
+
+    <h2>What it does</h2>
+    <div class="grid">
+      <div class="card"><h3>Authenticated submission</h3><p>SMTP AUTH accounts or trusted-CIDR relay (IP-authenticated), per-account IP pinning, relay-domain gate, inbound rate limiting, SMTP/submission/SMTPS listeners.</p></div>
+      <div class="card"><h3>Routed, failover delivery</h3><p>Recipient → sender → default routing with per-rule failover chains; retry tiers (30s/5m/30m) → DLQ → RFC 3464 bounces.</p></div>
+      <div class="card"><h3>DKIM signing</h3><p>Per-domain keys with rotation, generated in the GUI (DNS TXT returned); private keys envelope-encrypted at rest.</p></div>
+      <div class="card"><h3>Deliverability</h3><p>Suppression list + provider bounce/complaint feedback; per-recipient-domain and per-provider rate limits.</p></div>
+      <div class="card"><h3>HA &amp; resilient</h3><p>3-node RabbitMQ quorum queues, HA Postgres (1 primary + 2 sync replicas, auto-failover), 2× data-plane replicas + PDBs.</p></div>
+      <div class="card"><h3>Operable</h3><p>Operator login + roles (admin/viewer), full audit log, Prometheus metrics, message tracing, queue purge / requeue.</p></div>
+    </div>
+
+    <h2>Message flow</h2>
+    <ul class="flow">
+      <li>submit → ingress authorizes → body to Postgres, metadata to Postgres → publish job to <code>relay.work</code> (routing key = recipient domain)</li>
+      <li>delivery consumes (manual ack) → resolve route → DKIM-sign → relay to provider → ack on success</li>
+      <li>transient 4xx → wait tier (TTL+DLX) → retry · permanent 5xx / exhausted → DLQ → DSN bounce</li>
+    </ul>
+
+    <h2>Deploy</h2>
+    <pre>helm upgrade --install novamail deploy/helm/novamail -n novamail --set image.tag=&lt;tag&gt;</pre>
+    <p>Also ships <code>deploy/docker-compose/</code> (single host) and <code>deploy/systemd/</code> (bare metal).
+    Architecture &amp; build contract: see <a href="https://github.com/azrtydxb/novamail">the repository</a> and <code>CLAUDE.md</code>.</p>
+  </main>
+
+  <footer>NovaMail · self-hosted · relay-only · your mail, your infra</footer>
+</body>
+</html>
