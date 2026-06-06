@@ -1,0 +1,45 @@
+{{- if .Values.maintenance.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "novamail.fullname" . }}-maintenance
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+spec:
+  schedule: {{ .Values.maintenance.schedule | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 900
+      template:
+        metadata:
+          labels:
+            {{- include "novamail.labels" . | nindent 12 }}
+        spec:
+          restartPolicy: Never
+          securityContext:
+            {{- toYaml .Values.podSecurityContext | nindent 12 }}
+          containers:
+            - name: maintenance
+              image: {{ include "novamail.maintenanceImage" . }}
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              securityContext:
+                {{- toYaml .Values.securityContext | nindent 16 }}
+              envFrom:
+                {{- include "novamail.depsEnvFrom" . | nindent 16 }}
+              env:
+                - name: NOVAMAIL_BODY_STORE
+                  value: {{ .Values.bodyStore.mountPath | quote }}
+              volumeMounts:
+                - name: bodies
+                  mountPath: {{ .Values.bodyStore.mountPath }}
+              resources:
+                {{- toYaml .Values.maintenance.resources | nindent 16 }}
+          volumes:
+            - name: bodies
+              persistentVolumeClaim:
+                claimName: {{ include "novamail.fullname" . }}-bodies
+{{- end }}

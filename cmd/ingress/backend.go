@@ -156,6 +156,12 @@ func (s *session) Data(r io.Reader) error {
 		s.be.log.Error("persist body", "err", err, "from", s.from)
 		return err
 	}
+	// Enforce the configurable size cap (hot-reloadable via settings).
+	if p := s.be.policy.Load(); p != nil && p.maxMessageBytes > 0 && cap.n > p.maxMessageBytes {
+		_ = s.be.store.Delete(ctx, id)
+		rejected.Inc()
+		return &smtp.SMTPError{Code: 552, EnhancedCode: smtp.EnhancedCode{5, 3, 4}, Message: "Message exceeds maximum permitted size"}
+	}
 	meta := model.MessageMeta{SizeBytes: cap.n}
 	if tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(cap.hdr.Bytes()))); tp != nil {
 		if mh, herr := tp.ReadMIMEHeader(); herr == nil || mh != nil {

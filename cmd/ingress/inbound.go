@@ -16,8 +16,9 @@ import (
 type inboundPolicy struct {
 	clients      []trustedClient
 	relayDomains map[string]bool // empty ⇒ no domain gate (accept any sender domain)
-	suppressed   map[string]bool // lowercased addresses to reject at RCPT
-	limiter      *ratelimit.Limiter
+	suppressed      map[string]bool // lowercased addresses to reject at RCPT
+	limiter         *ratelimit.Limiter
+	maxMessageBytes int64 // 0 ⇒ unlimited
 }
 
 type trustedClient struct {
@@ -69,6 +70,7 @@ func buildInbound(ctx context.Context, database *db.DB, logger *slog.Logger) *in
 		}
 	}
 	p.limiter = ratelimit.Build(specs)
+	p.maxMessageBytes = database.GetSettingInt(ctx, "max_message_bytes", 50<<20)
 
 	logger.Info("inbound policy loaded", "trustedClients", len(p.clients), "relayDomains", len(p.relayDomains), "inboundLimits", len(specs), "suppressed", len(p.suppressed))
 	return p

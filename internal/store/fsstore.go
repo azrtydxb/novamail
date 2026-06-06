@@ -28,6 +28,20 @@ func NewFSStore(dir string) (*FSStore, error) {
 	return &FSStore{root: dir}, nil
 }
 
+// Walk calls fn for every body key currently stored (filenames under the shard
+// dirs). Used by the maintenance sweep to find orphaned bodies.
+func (s *FSStore) Walk(fn func(id string)) error {
+	return filepath.WalkDir(s.root, func(_ string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() {
+			fn(d.Name())
+		}
+		return nil
+	})
+}
+
 func (s *FSStore) path(id string) (string, error) {
 	// Guard against path traversal and empty ids.
 	if id == "" || strings.ContainsAny(id, "/\\") || id == "." || id == ".." {

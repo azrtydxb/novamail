@@ -153,3 +153,12 @@ securityContext:
   readOnlyRootFilesystem: true
   capabilities:
     drop: ["ALL"]
+
+# Retention sweep: prunes terminal messages/events past settings.retention_days
+# and removes orphaned body files. Runs daily as a CronJob.
+maintenance:
+  enabled: true
+  schedule: "17 3 * * *"
+  resources:
+    requests: { cpu: 25m, memory: 32Mi }
+    limits: { cpu: 200m, memory: 128Mi }

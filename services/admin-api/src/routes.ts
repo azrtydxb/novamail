@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { pool } from "./db.js";
-import { publishConfigChanged } from "./bus.js";
+import { publishConfigChanged, publishRelayJob } from "./bus.js";
 import { encrypt } from "./secrets.js";
 import { signToken } from "./auth.js";
 import crypto from "crypto";
@@ -164,6 +164,54 @@ export function registerRoutes(app: FastifyInstance): void {
     if (!rowCount) return reply.code(404).send({ error: "not found" });
     await publishConfigChanged(["providers", "dkim_keys"]);
     return reply.code(204).send();
+  });
+
+  // Global settings (key/value JSON; hot-reloaded by the data plane).
+  app.get("/api/settings", async () => {
+    const { rows } = await pool.query("SELECT key, value, updated_at FROM settings ORDER BY key");
+    return rows;
+  });
+  app.put("/api/settings/:key", async (req, reply) => {
+    const key = (req.params as { key: string }).key;
+    const value = (req.body as { value?: unknown }).value;
+    if (value === undefined) return reply.code(400).send({ error: "value required" });
+    await pool.query(
+      `INSERT INTO settings (key, value, updated_at) VALUES ($1,$2,now())
+       ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()`,
+      [key, JSON.stringify(value)],
+    );
+    await publishConfigChanged(["settings"]);
+    return { key, value };
+  });
+
+  // Requeue a message for another delivery attempt (body must still exist —
+  // terminal messages have had their body garbage-collected).
+  app.post("/api/messages/:id/requeue", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const { rows } = await pool.query(
+      "SELECT id, mail_from, rcpt_to, body_ref, body_backend, status FROM messages WHERE id=$1",
+      [id],
+    );
+    if (rows.length === 0) return reply.code(404).send({ error: "not found" });
+    const m = rows[0];
+    if (["relayed", "bounced", "failed"].includes(m.status)) {
+      return reply.code(409).send({ error: `message is ${m.status}; body no longer available to resend` });
+    }
+    const rcpts: string[] = m.rcpt_to ?? [];
+    const recipientDomain = (rcpts[0]?.split("@")[1] ?? "").toLowerCase();
+    const senderDomain = (m.mail_from?.split("@")[1] ?? "").toLowerCase();
+    const job = {
+      v: 1,
+      messageId: m.id,
+      bodyRef: { backend: m.body_backend, key: m.body_ref },
+      envelope: { mailFrom: m.mail_from, rcptTo: rcpts },
+      routingHints: { recipientDomain, senderDomain },
+      attempt: 0,
+      enqueuedAt: new Date().toISOString(),
+    };
+    const ok = await publishRelayJob(job);
+    if (!ok) return reply.code(502).send({ error: "bus unavailable" });
+    return { requeued: id };
   });
 
   // Operator authentication (GUI login → bearer token).
