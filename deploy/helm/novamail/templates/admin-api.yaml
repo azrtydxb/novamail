@@ -1,0 +1,103 @@
+{{- if .Values.adminApi.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "novamail.fullname" . }}-admin-api
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-api
+spec:
+  replicas: {{ .Values.adminApi.replicas }}
+  selector:
+    matchLabels:
+      {{- include "novamail.admin.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "novamail.admin.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: admin-api
+          image: {{ include "novamail.adminImage" . }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          ports:
+            - name: http
+              containerPort: {{ .Values.adminApi.port }}
+          env:
+            - name: PORT
+              value: {{ .Values.adminApi.port | quote }}
+            - name: NOVAMAIL_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminApi.apiKeySecret }}
+                  key: NOVAMAIL_ADMIN_API_KEY
+                  optional: true
+          envFrom:
+            {{- include "novamail.depsEnvFrom" . | nindent 12 }}
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.adminApi.resources | nindent 12 }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "novamail.fullname" . }}-admin-api
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+    app.kubernetes.io/component: admin-api
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "novamail.admin.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.adminApi.port }}
+      targetPort: http
+{{- if .Values.adminApi.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "novamail.fullname" . }}-admin-api
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+  annotations:
+    cert-manager.io/cluster-issuer: {{ .Values.tls.issuer }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  tls:
+    - hosts: [{{ .Values.adminApi.ingress.host | quote }}]
+      secretName: {{ include "novamail.fullname" . }}-admin-tls
+  rules:
+    - host: {{ .Values.adminApi.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "novamail.fullname" . }}-admin-api
+                port:
+                  name: http
+{{- end }}
+{{- end }}

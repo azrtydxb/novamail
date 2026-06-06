@@ -44,8 +44,20 @@ jobs:
           version: v3.16.2
       - run: helm lint deploy/helm/novamail
 
+  node-check:
+    runs-on: arc-azrtydxb
+    container:
+      image: node:24
+    steps:
+      - uses: actions/checkout@v4
+      - name: admin-api typecheck + build
+        working-directory: services/admin-api
+        run: |
+          npm ci
+          npm run build
+
   build-image:
-    needs: [test, lint, helm-lint]
+    needs: [test, lint, helm-lint, node-check]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-azrtydxb-publish
     strategy:
@@ -79,8 +91,39 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true
 
+  build-admin-api:
+    needs: [test, lint, helm-lint, node-check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: arc-azrtydxb-publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Set up buildx (zot insecure)
+        run: |
+          cat > /tmp/buildkitd.toml <<'EOF'
+          [registry."192.168.10.123:5000"]
+            insecure = true
+          EOF
+          docker buildx create --name nm --driver docker-container \
+            --platform linux/arm64 --buildkitd-config /tmp/buildkitd.toml --use
+          docker buildx inspect --bootstrap
+      - name: Build & push admin-api (arm64 → zot)
+        uses: docker/build-push-action@v6
+        with:
+          context: services/admin-api
+          builder: nm
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/admin-api:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_BASE }}/admin-api:main
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true
+
   deploy:
-    needs: [build-image]
+    needs: [build-image, build-admin-api]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # No `container:` — run on the runner pod itself so the in-cluster
     # ServiceAccount token (mounted at the standard path) is available.
@@ -114,3 +157,4 @@ jobs:
           kubectl -n novamail rollout status deploy/novamail-ingress --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-delivery --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-dsn --timeout=120s
+          kubectl -n novamail rollout status deploy/novamail-admin-api --timeout=120s

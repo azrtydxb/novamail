@@ -8,6 +8,11 @@ coverage.*
 # Go
 /vendor/
 
+# Node
+node_modules/
+**/dist/
+*.tsbuildinfo
+
 # Local env / secrets
 .env
 *.local
