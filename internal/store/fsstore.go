@@ -33,11 +33,20 @@ func NewFSStore(dir string) (*FSStore, error) {
 func (s *FSStore) Walk(fn func(id string)) error {
 	return filepath.WalkDir(s.root, func(_ string, d os.DirEntry, err error) error {
 		if err != nil {
-			return err
+			// Skip unreadable entries (e.g. lost+found on an ext4 RWX volume)
+			// rather than aborting the whole sweep.
+			if d != nil && d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
 		}
-		if !d.IsDir() {
-			fn(d.Name())
+		if d.IsDir() {
+			if d.Name() == "lost+found" {
+				return filepath.SkipDir
+			}
+			return nil
 		}
+		fn(d.Name())
 		return nil
 	})
 }
