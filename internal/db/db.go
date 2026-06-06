@@ -43,9 +43,10 @@ func (d *DB) Authenticate(ctx context.Context, username, password string) (*mode
 		hash string
 	)
 	err := d.pool.QueryRow(ctx,
-		`SELECT id, username, password_hash, allowed_sender_domains
-		   FROM accounts WHERE username=$1`, username,
-	).Scan(&acc.ID, &acc.Username, &hash, &acc.AllowedSenderDomains)
+		`SELECT id, username, password_hash, allowed_sender_domains,
+		        coalesce(array(SELECT host(network(x))||'/'||masklen(x) FROM unnest(ip_allowlist) x), '{}')
+		   FROM accounts WHERE username=$1 AND enabled = true`, username,
+	).Scan(&acc.ID, &acc.Username, &hash, &acc.AllowedSenderDomains, &acc.IPAllowlist)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrAuth
 	}
@@ -95,6 +96,25 @@ func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
 			return nil, err
 		}
 		out = append(out, rl)
+	}
+	return out, rows.Err()
+}
+
+// GetRelayDomains loads the set of permitted sender/relay domains (enabled).
+// An empty result means "no domain gate" (accept any sender domain).
+func (d *DB) GetRelayDomains(ctx context.Context) ([]string, error) {
+	rows, err := d.pool.Query(ctx, `SELECT domain FROM relay_domains WHERE enabled = true`)
+	if err != nil {
+		return nil, fmt.Errorf("query relay domains: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var s string
+		if err := rows.Scan(&s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
 	}
 	return out, rows.Err()
 }

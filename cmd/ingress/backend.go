@@ -6,6 +6,7 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"net"
 	"net/textproto"
 	"strings"
 	"sync/atomic"
@@ -20,32 +21,43 @@ import (
 	"github.com/azrtydxb/novamail/internal/store"
 )
 
-// backend implements smtp.Backend. M1 accepts a submission, persists the body,
-// records metadata in Postgres, and publishes a relay job. SMTP AUTH/TLS and
-// inbound authorization are layered on next.
+// backend implements smtp.Backend: authorizes submissions (SMTP AUTH against
+// accounts OR trusted source IP via relay_clients), persists the body, records
+// metadata, and publishes a relay job. The inbound policy is hot-reloaded.
 type backend struct {
-	store *store.FSStore
-	db    *db.DB
-	bus   *amqp.Conn
-	log   *slog.Logger
+	store  *store.FSStore
+	db     *db.DB
+	bus    *amqp.Conn
+	policy atomic.Pointer[inboundPolicy]
+	log    *slog.Logger
 }
 
-func (b *backend) NewSession(_ *smtp.Conn) (smtp.Session, error) {
-	return &session{be: b}, nil
+func (b *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
+	s := &session{be: b}
+	if c != nil && c.Conn() != nil {
+		s.ip = remoteIP(c.Conn().RemoteAddr().String())
+	}
+	// Trusted source IP ⇒ relay without AUTH (IP-authenticated).
+	if p := b.policy.Load(); p != nil {
+		s.client = p.matchClient(s.ip)
+	}
+	return s, nil
 }
 
 type session struct {
-	be    *backend
-	auth  *model.Account
-	from  string
-	rcpts []string
+	be     *backend
+	ip     net.IP
+	auth   *model.Account  // set on successful SMTP AUTH
+	client *trustedClient  // set when the source IP is a trusted relay client
+	from   string
+	rcpts  []string
 }
 
 // AuthMechanisms advertises PLAIN (offered only after TLS; see AllowInsecureAuth).
 func (s *session) AuthMechanisms() []string { return []string{sasl.Plain} }
 
-// Auth validates credentials against the accounts table and binds the account
-// to the session.
+// Auth validates credentials against the accounts table, enforces the account's
+// IP allowlist (if any), and binds the account to the session.
 func (s *session) Auth(string) (sasl.Server, error) {
 	return sasl.NewPlainServer(func(_, username, password string) error {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -55,17 +67,51 @@ func (s *session) Auth(string) (sasl.Server, error) {
 			s.be.log.Warn("auth failed", "username", username)
 			return smtp.ErrAuthFailed
 		}
+		if len(acc.IPAllowlist) > 0 && !ipInAny(s.ip, acc.IPAllowlist) {
+			s.be.log.Warn("auth rejected: source IP not in allowlist", "username", username, "ip", s.ip)
+			return smtp.ErrAuthFailed
+		}
 		s.auth = acc
 		return nil
 	}), nil
 }
 
-func (s *session) Mail(from string, _ *smtp.MailOptions) error {
-	if s.auth == nil {
-		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Authentication required"}
+// allowedSenders returns the effective allowed-sender set for the session.
+func (s *session) allowedSenders() []string {
+	if s.auth != nil {
+		return s.auth.AllowedSenderDomains
 	}
-	if !s.auth.AllowsSender(domainOf([]string{from})) {
-		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "Sender domain not permitted for this account"}
+	if s.client != nil {
+		return s.client.senders
+	}
+	return nil
+}
+
+func (s *session) Mail(from string, _ *smtp.MailOptions) error {
+	// Authorization: a valid SMTP AUTH session OR a trusted source IP.
+	if s.auth == nil && s.client == nil {
+		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Authentication required (or relay from a trusted IP)"}
+	}
+	domain := domainOf([]string{from})
+	if !sendersAllow(s.allowedSenders(), domain) {
+		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "Sender domain not permitted for this client"}
+	}
+	// Relay-domain gate (if configured).
+	if p := s.be.policy.Load(); p != nil {
+		if !p.relayDomainOK(domain) {
+			return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "Sender domain is not a permitted relay domain"}
+		}
+		// Inbound rate limiting (per account / source IP / global).
+		key := "*"
+		if s.auth != nil {
+			key = "acct:" + s.auth.ID
+		} else if s.ip != nil {
+			key = "ip:" + s.ip.String()
+		}
+		if delay, res, limited := p.limiter.Reserve(key); limited && delay > 0 {
+			res.Cancel()
+			return &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 7, 0}, Message: "Rate limit exceeded; try again later"}
+		}
 	}
 	s.from = from
 	return nil

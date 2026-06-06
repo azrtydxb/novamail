@@ -56,6 +56,7 @@ type Account struct {
 	ID                   string
 	Username             string
 	AllowedSenderDomains []string
+	IPAllowlist          []string // CIDRs; empty = any source IP
 }
 
 // ConfigChanged is published by the Admin API after a successful config write
