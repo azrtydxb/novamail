@@ -45,6 +45,19 @@ var (
 	relayed  = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_relayed_total", Help: "Messages successfully relayed upstream."})
 	deferred = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_deferred_total", Help: "Messages deferred (transient upstream failure)."})
 	failed   = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_failed_total", Help: "Messages permanently failed."})
+
+	// Per-provider attempt outcome (delivered|deferred|failed) — the core
+	// operator signal for the multi-provider/failover design.
+	providerOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "novamail_delivery_provider_attempts_total",
+		Help: "Per-provider delivery attempt outcomes.",
+	}, []string{"provider", "outcome"})
+	// Upstream send latency (the relay's primary SLI).
+	sendDuration = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Name:    "novamail_delivery_send_seconds",
+		Help:    "Upstream send (handoff) duration in seconds.",
+		Buckets: prometheus.DefBuckets,
+	}, []string{"provider"})
 )
 
 func env(k, def string) string {
@@ -264,7 +277,9 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 				}
 			}
 		}
+		sendStart := time.Now()
 		res, serr := p.Send(hctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
+		sendDuration.WithLabelValues(p.Name()).Observe(time.Since(sendStart).Seconds())
 		// A non-nil error must never be read as a successful delivery: if a
 		// provider returns an error with a zero-value (Delivered) outcome, treat
 		// it as a transient defer so we never GC the body / ack a failed send.
@@ -274,6 +289,7 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 				res.Detail = serr.Error()
 			}
 		}
+		providerOutcomes.WithLabelValues(p.Name(), res.Outcome.String()).Inc()
 		lastProvider, lastDetail = p.Name(), res.Detail
 		if res.Outcome == providers.Delivered {
 			relayed.Inc()

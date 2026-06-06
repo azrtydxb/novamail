@@ -9,6 +9,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -18,12 +19,20 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	amqp091 "github.com/rabbitmq/amqp091-go"
 
 	"github.com/azrtydxb/novamail/internal/amqp"
 	"github.com/azrtydxb/novamail/internal/db"
 	"github.com/azrtydxb/novamail/internal/model"
 	"github.com/azrtydxb/novamail/internal/store"
+)
+
+var (
+	bounced    = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_dsn_bounced_total", Help: "DSN bounces generated (RFC 3464)."})
+	suppressed = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_dsn_suppressed_total", Help: "DSNs suppressed (NOTIFY=NEVER / double-bounce)."})
 )
 
 func env(k, def string) string {
@@ -124,6 +133,7 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 	// Null sender (<>) means this is already a bounce — never bounce a bounce.
 	// NOTIFY=NEVER (DSNSuppress) means the sender asked for no failure notice.
 	if job.Envelope.MailFrom == "" || job.DSNSuppress {
+		suppressed.Inc()
 		_ = g.store.Delete(hctx, job.BodyRef.Key)
 		g.log.Warn("DSN suppressed", "id", job.MessageID, "reason", suppressReason(&job))
 		_ = d.Ack(false)
@@ -161,6 +171,7 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 	}
 	// GC: the original message is terminal (bounced); drop its body.
 	_ = g.store.Delete(hctx, job.BodyRef.Key)
+	bounced.Inc()
 	g.log.Info("bounce generated", "original", job.MessageID, "dsn", dsnID, "to", job.Envelope.MailFrom)
 	_ = d.Ack(false)
 }
@@ -191,7 +202,8 @@ func serveHealth(addr string, database *db.DB, bus *amqp.Conn, logger *slog.Logg
 		}
 		_, _ = io.WriteString(w, "ready")
 	})
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	mux.Handle("/metrics", promhttp.Handler())
+	if err := http.ListenAndServe(addr, mux); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("http server", "err", err)
 	}
 }
