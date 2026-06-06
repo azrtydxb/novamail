@@ -58,6 +58,14 @@ type Account struct {
 	AllowedSenderDomains []string
 }
 
+// RateLimit caps delivery throughput for a recipient domain (row in the
+// rate_limits table). Domain "*" is the default for unmatched domains.
+type RateLimit struct {
+	Domain    string
+	PerSecond float64
+	Burst     int
+}
+
 // Provider is an upstream relay target (row in the providers table).
 type Provider struct {
 	ID        string

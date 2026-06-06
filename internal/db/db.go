@@ -58,6 +58,25 @@ func (d *DB) Authenticate(ctx context.Context, username, password string) (*mode
 	return &acc, nil
 }
 
+// GetRateLimits loads all enabled per-domain rate limits.
+func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT domain, per_second, burst FROM rate_limits WHERE enabled = true`)
+	if err != nil {
+		return nil, fmt.Errorf("query rate limits: %w", err)
+	}
+	defer rows.Close()
+	var out []model.RateLimit
+	for rows.Next() {
+		var rl model.RateLimit
+		if err := rows.Scan(&rl.Domain, &rl.PerSecond, &rl.Burst); err != nil {
+			return nil, err
+		}
+		out = append(out, rl)
+	}
+	return out, rows.Err()
+}
+
 // GetProviders loads all enabled providers.
 func (d *DB) GetProviders(ctx context.Context) ([]model.Provider, error) {
 	rows, err := d.pool.Query(ctx,

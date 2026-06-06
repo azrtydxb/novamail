@@ -29,9 +29,14 @@ import (
 	"github.com/azrtydxb/novamail/internal/dkim"
 	"github.com/azrtydxb/novamail/internal/model"
 	"github.com/azrtydxb/novamail/internal/providers"
+	"github.com/azrtydxb/novamail/internal/ratelimit"
 	"github.com/azrtydxb/novamail/internal/routing"
 	"github.com/azrtydxb/novamail/internal/store"
 )
+
+// maxRateBlock caps how long a worker will sleep to honor a rate limit before
+// deferring the message to a wait tier instead (keeps the consumer flowing).
+const maxRateBlock = 5 * time.Second
 
 var (
 	relayed = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_relayed_total", Help: "Messages successfully relayed upstream."})
@@ -77,6 +82,15 @@ func main() {
 	secretDir := env("NOVAMAIL_PROVIDER_SECRETS", "/etc/novamail/provider-secrets")
 	engine, instances := loadRouting(initCtx, database, secretDir, logger)
 
+	// Per-recipient-domain rate limits (also from Postgres).
+	limits, err := database.GetRateLimits(initCtx)
+	if err != nil {
+		logger.Error("load rate limits", "err", err)
+		os.Exit(1)
+	}
+	limiter := ratelimit.Build(limits)
+	logger.Info("rate limits loaded", "domains", len(limits))
+
 	signer, err := dkim.Load(
 		os.Getenv("NOVAMAIL_DKIM_DOMAIN"),
 		os.Getenv("NOVAMAIL_DKIM_SELECTOR"),
@@ -92,7 +106,7 @@ func main() {
 
 	w := &worker{
 		store: bodies, db: database, bus: bus,
-		engine: engine, instances: instances,
+		engine: engine, instances: instances, limiter: limiter,
 		signer: signer, log: logger,
 	}
 
@@ -133,6 +147,7 @@ type worker struct {
 	bus       *amqp.Conn
 	engine    *routing.Engine
 	instances map[string]providers.Provider // provider id → instance
+	limiter   *ratelimit.Limiter
 	signer    *dkim.Signer
 	log       *slog.Logger
 }
@@ -176,6 +191,26 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 		// No route configured (yet): defer so it retries when config arrives.
 		w.defer_(hctx, d, &job, "no matching routing rule")
 		return
+	}
+
+	// Per-domain rate limiting: reserve a token for the recipient domain. Sleep
+	// for small delays; defer to a wait tier if the backlog is large so the
+	// consumer keeps flowing.
+	if delay, res, limited := w.limiter.Reserve(job.RoutingHints.RecipientDomain); limited {
+		if delay > maxRateBlock {
+			res.Cancel()
+			w.defer_(hctx, d, &job, "rate limited: "+job.RoutingHints.RecipientDomain)
+			return
+		}
+		if delay > 0 {
+			select {
+			case <-time.After(delay):
+			case <-hctx.Done():
+				res.Cancel()
+				_ = d.Nack(false, true)
+				return
+			}
+		}
 	}
 
 	// Try the chain in order. A Delivered ends it; a Defer or Fail advances to
