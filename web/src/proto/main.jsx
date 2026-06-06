@@ -129,7 +129,7 @@ function TopBar({ route, onToggleSidebar, onToggleTheme, theme, onOpenPalette, o
 
 function App() {
   const [t, setTweak] = usePrefs();
-  const [authed, setAuthed] = useAppState(() => !!(window.Store && window.Store.hasToken && window.Store.hasToken()));
+  const [authed, setAuthed] = useAppState(null); // null = checking session, false = login, true = app
   const [route, setRoute] = useAppState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useAppState(true);
   const [paletteOpen, setPaletteOpen] = useAppState(false);
@@ -147,9 +147,14 @@ function App() {
     root.style.setProperty('--font-display', fp.display);
   }, [t.theme, t.accent, t.density, t.fontPair]);
 
+  // Resolve the session cookie on mount (cookies aren't synchronously readable).
+  useAppEffect(() => {
+    window.Store.checkSession().then((op) => setAuthed(!!op));
+  }, []);
+
   // Load live data once authed, then poll telemetry (queues/metrics/messages).
   useAppEffect(() => {
-    if (!authed) return;
+    if (authed !== true) return;
     window.Store.loadAll();
     const light = setInterval(() => window.Store.refreshLight(), 5000);
     const full = setInterval(() => window.Store.loadAll(), 60000);
@@ -169,6 +174,7 @@ function App() {
   const navigate = (r) => { setRoute(r); };
   const openMessage = (id) => { setMsgId(id || null); setRoute('messages'); };
 
+  if (authed === null) return <div style={{ height: '100vh', background: 'var(--bg)' }} />;
   if (!authed) return <Login onSignIn={() => setAuthed(true)} />;
 
   let main;

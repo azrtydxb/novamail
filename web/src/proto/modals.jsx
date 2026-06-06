@@ -346,7 +346,7 @@ function OperatorForm({ onClose }) {
   const [f, setF] = useMState({ username: '', password: '', role: 'admin' });
   const [tried, setTried] = useMState(false);
   const up = (k, v) => setF(s => ({ ...s, [k]: v }));
-  const invalid = { username: !f.username.trim(), pass: !f.password };
+  const invalid = { username: !/.+@.+/.test(f.username), pass: f.password.length < 8 };
   const save = async () => {
     setTried(true);
     if (invalid.username || invalid.pass) return;
@@ -357,9 +357,9 @@ function OperatorForm({ onClose }) {
     <ModalShell eyebrow="observe" title="New operator" icon={<I.Users size={17} />} onClose={onClose} width={440}
       footer={<><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Check size={13} />} onClick={save}>create operator</Btn></>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-        <FRow label="username" error={tried && invalid.username ? 'required' : null}><FText value={f.username} onChange={v => up('username', v)} placeholder="ops@watteel.com" invalid={tried && invalid.username} /></FRow>
-        <FRow label="password" error={tried && invalid.pass ? 'required' : null}><FText type="password" value={f.password} onChange={v => up('password', v)} placeholder="••••••••••••" invalid={tried && invalid.pass} /></FRow>
-        <FRow label="role"><FSelect value={f.role} onChange={v => up('role', v)} options={['admin', 'viewer']} /></FRow>
+        <FRow label="email" error={tried && invalid.username ? 'valid email required' : null}><FText value={f.username} onChange={v => up('username', v)} placeholder="ops@watteel.com" invalid={tried && invalid.username} /></FRow>
+        <FRow label="password" hint="min 8 characters" error={tried && invalid.pass ? 'too short' : null}><FText type="password" value={f.password} onChange={v => up('password', v)} placeholder="••••••••••••" invalid={tried && invalid.pass} /></FRow>
+        <FRow label="role" hint="admin = read/write · user = read-only"><FSelect value={f.role} onChange={v => up('role', v)} options={['admin', 'user']} /></FRow>
       </div>
     </ModalShell>
   );
@@ -474,7 +474,7 @@ function ChangePasswordModal({ onClose }) {
   const [tried, setTried] = useMState(false);
   const [busy, setBusy] = useMState(false);
   const up = (k, v) => setF(s => ({ ...s, [k]: v }));
-  const invalid = { current: !f.current, next: f.next.length < 6, confirm: f.confirm !== f.next };
+  const invalid = { current: !f.current, next: f.next.length < 8, confirm: f.confirm !== f.next };
   const save = async () => {
     setTried(true);
     if (invalid.current || invalid.next || invalid.confirm) return;
@@ -488,7 +488,7 @@ function ChangePasswordModal({ onClose }) {
       footer={<><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Check size={13} />} onClick={save}>{busy ? 'saving…' : 'update password'}</Btn></>}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
         <FRow label="current password" error={tried && invalid.current ? 'required' : null}><FText type="password" value={f.current} onChange={v => up('current', v)} placeholder="••••••••••••" invalid={tried && invalid.current} /></FRow>
-        <FRow label="new password" hint="min 6 characters" error={tried && invalid.next ? 'too short' : null}><FText type="password" value={f.next} onChange={v => up('next', v)} placeholder="••••••••••••" invalid={tried && invalid.next} /></FRow>
+        <FRow label="new password" hint="min 8 characters" error={tried && invalid.next ? 'too short' : null}><FText type="password" value={f.next} onChange={v => up('next', v)} placeholder="••••••••••••" invalid={tried && invalid.next} /></FRow>
         <FRow label="confirm new password" error={tried && invalid.confirm ? 'does not match' : null}><FText type="password" value={f.confirm} onChange={v => up('confirm', v)} placeholder="••••••••••••" invalid={tried && invalid.confirm} /></FRow>
       </div>
     </ModalShell>

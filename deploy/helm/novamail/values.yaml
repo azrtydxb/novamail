@@ -69,6 +69,9 @@ adminApi:
     limits: { cpu: 500m, memory: 256Mi }
   # API key for the GUI/clients; lives in this Secret (key: NOVAMAIL_ADMIN_API_KEY).
   apiKeySecret: novamail-admin-api
+  # Public origin the browser uses to reach /api (the web GUI host) — better-auth
+  # uses this for the session-cookie domain, Secure flag, and CSRF origin check.
+  publicURL: https://novamail.kw.local
   ingress:
     enabled: true
     host: admin.kw.local
