@@ -11,6 +11,7 @@ import "./proto/store.jsx";
 import "./proto/modals.jsx";
 import "./proto/sidebar.jsx";
 import "./proto/tables.jsx";
+import "./proto/screens2.jsx";
 import "./proto/dashboard.jsx";
 import "./proto/messages.jsx";
 import "./proto/providers.jsx";

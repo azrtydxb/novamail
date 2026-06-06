@@ -47,8 +47,8 @@ function DataTable({ columns, rows, rowKey, onRowClick }) {
 function RowActions({ onEdit, onDelete }) {
   return (
     <div style={{ display: 'flex', gap: 2, justifyContent: 'flex-end' }} onClick={(e) => e.stopPropagation()}>
-      <IconBtn title="Edit" onClick={onEdit} size={26}><I.Edit size={13} /></IconBtn>
-      <IconBtn title="Delete" onClick={onDelete} size={26}><I.Trash size={13} /></IconBtn>
+      {onEdit && <IconBtn title="Edit" onClick={onEdit} size={26}><I.Edit size={13} /></IconBtn>}
+      {onDelete && <IconBtn title="Delete" onClick={onDelete} size={26}><I.Trash size={13} /></IconBtn>}
     </div>
   );
 }
@@ -180,4 +180,4 @@ function Accounts() {
   );
 }
 
-Object.assign(window, { RoutingRules, RelayDomains, RateLimits, Accounts, DataTable, Chip });
+Object.assign(window, { RoutingRules, RelayDomains, RateLimits, Accounts, DataTable, Chip, RowActions });

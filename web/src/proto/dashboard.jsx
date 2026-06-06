@@ -22,8 +22,9 @@ function ThroughputChart({ height = 220 }) {
   const { SERIES } = window.NM_DATA;
   const pad = { l: 0, r: 0, t: 12, b: 22 };
   const innerH = height - pad.t - pad.b;
-  const data = SERIES.relayed, data2 = SERIES.deferred;
-  const max = Math.max(...data) * 1.08;
+  const clean = (a) => (a || []).map((v) => (Number.isFinite(v) ? v : 0));
+  const data = clean(SERIES.relayed), data2 = clean(SERIES.deferred);
+  const max = Math.max(1, Math.max(...data) * 1.08);
   const x = (i) => (i / (data.length - 1)) * w;
   const y = (v) => pad.t + innerH - (v / max) * innerH;
   const line = (arr) => arr.map((v, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');

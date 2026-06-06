@@ -31,6 +31,8 @@ const I = {
   Key:      (p) => <Icon {...p}><circle cx="7.5" cy="15.5" r="3.5"/><path d="m10 13 9-9M16 4l3 3M14 6l2.5 2.5"/></Icon>,
   Users:    (p) => <Icon {...p}><circle cx="9" cy="8" r="3.2"/><path d="M3 20a6 6 0 0 1 12 0M16 5.2a3.2 3.2 0 0 1 0 6.1M21 20a6 6 0 0 0-4-5.6"/></Icon>,
   Shield:   (p) => <Icon {...p}><path d="M12 3 5 6v5c0 4.5 3 7.5 7 9 4-1.5 7-4.5 7-9V6z"/><path d="m9 12 2 2 4-4"/></Icon>,
+  Ban:      (p) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="m5.6 5.6 12.8 12.8"/></Icon>,
+  List:     (p) => <Icon {...p}><path d="M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01"/></Icon>,
   Layers:   (p) => <Icon {...p}><path d="m12 3 9 5-9 5-9-5z"/><path d="m3 13 9 5 9-5M3 17l9 5 9-5"/></Icon>,
   Activity: (p) => <Icon {...p} d="M3 12h4l3 8 4-16 3 8h4"/>,
   Clock:    (p) => <Icon {...p}><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></Icon>,

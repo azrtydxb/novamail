@@ -19,8 +19,17 @@ function Field({ label, type = 'text', value, onChange, placeholder, autoFocus }
 
 function Login({ onSignIn }) {
   const [tab, setTab] = useLoginState('signin');
-  const [user, setUser] = useLoginState('admin@watteel.com');
+  const [user, setUser] = useLoginState('admin');
   const [pass, setPass] = useLoginState('');
+  const [err, setErr] = useLoginState('');
+  const [busy, setBusy] = useLoginState(false);
+
+  const doLogin = async () => {
+    setErr(''); setBusy(true);
+    try { await window.Store.login(user, pass); onSignIn(); }
+    catch (e) { setErr(String(e.message || e).replace(/^\d+\s*/, '') || 'login failed'); }
+    finally { setBusy(false); }
+  };
 
   return (
     <div className="bg-grid" style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--bg)', position: 'relative', overflow: 'hidden' }}>
@@ -52,16 +61,19 @@ function Login({ onSignIn }) {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-            <Field label="operator email" value={user} onChange={setUser} placeholder="you@domain.com" autoFocus />
-            <Field label="password" type="password" value={pass} onChange={setPass} placeholder="••••••••••••" />
-            <button onClick={onSignIn} className="mono" style={{
+            <Field label="operator" value={user} onChange={setUser} placeholder="admin" autoFocus />
+            <div onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }}>
+              <Field label="password" type="password" value={pass} onChange={setPass} placeholder="••••••••••••" />
+            </div>
+            {err && <div className="mono" style={{ fontSize: 11, color: 'var(--accent-danger)', display: 'flex', alignItems: 'center', gap: 6 }}><I.AlertTriangle size={13} />{err}</div>}
+            <button onClick={doLogin} disabled={busy} className="mono" style={{
               marginTop: 4, padding: '11px', borderRadius: 7, background: 'var(--accent)', color: 'var(--accent-fg)',
               fontSize: 12.5, fontWeight: 600, letterSpacing: '0.04em', textTransform: 'uppercase',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: busy ? 0.6 : 1,
             }}
               onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.08)'}
               onMouseLeave={(e) => e.currentTarget.style.filter = 'none'}
-            >{tab === 'signin' ? 'sign in' : 'create account'}<I.ArrowRight size={14} /></button>
+            >{busy ? 'signing in…' : (tab === 'signin' ? 'sign in' : 'create account')}<I.ArrowRight size={14} /></button>
 
             {/* divider */}
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0' }}>
@@ -69,7 +81,7 @@ function Login({ onSignIn }) {
               <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>OR</span>
               <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
             </div>
-            <button onClick={onSignIn} className="mono" style={{
+            <button onClick={() => window.nmToast('SSO is not configured', 'danger')} className="mono" style={{
               padding: '10px', borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--line)',
               color: 'var(--fg-1)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, whiteSpace: 'nowrap',
             }}

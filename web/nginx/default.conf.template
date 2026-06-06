@@ -6,12 +6,13 @@ server {
     server_name _;
     root /usr/share/nginx/html;
 
-    # Proxy API calls to the admin-api, adding the API key server-side so the
-    # browser never holds it.
+    # Proxy API calls to the admin-api. Operators authenticate via /api/auth/login
+    # and the GUI sends its own bearer token, so nginx no longer injects the API
+    # key (that key remains for machine/automation clients).
     location /api/ {
         proxy_pass ${ADMIN_API_URL};
-        proxy_set_header x-api-key "${ADMIN_API_KEY}";
         proxy_set_header Host $host;
+        proxy_set_header Authorization $http_authorization;
     }
 
     # SPA fallback.

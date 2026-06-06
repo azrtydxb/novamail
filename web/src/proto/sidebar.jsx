@@ -2,24 +2,32 @@
 /* NovaMail sidebar — brand, search, nav sections, cluster-status footer */
 
 function Sidebar({ route, onNavigate, onCollapse, onOpenPalette, queueDepth }) {
-  const { SERVER, PROVIDERS, RELAY_DOMAINS, ACCOUNTS } = window.NM_DATA;
+  const { SERVER, PROVIDERS, RELAY_DOMAINS, ACCOUNTS, RELAY_CLIENTS, SUPPRESSIONS } = window.NM_DATA;
 
   const NAV = [
     { group: null, items: [
       { id: 'dashboard', label: 'Dashboard', icon: <I.Activity size={15} /> },
-      { id: 'messages', label: 'Messages', icon: <I.Mail size={15} />, hint: 'trace' },
-      { id: 'queue', label: 'Queue', icon: <I.Layers size={15} />, hint: queueDepth },
+    ]},
+    { group: 'incoming', items: [
+      { id: 'relayclients', label: 'Relay clients', icon: <I.Globe size={15} />, hint: (RELAY_CLIENTS || []).length || undefined },
+      { id: 'accounts', label: 'Accounts', icon: <I.Key size={15} />, hint: ACCOUNTS.filter(a => a.enabled).length },
+      { id: 'ratelimits_in', label: 'Inbound limits', icon: <I.Gauge size={15} /> },
     ]},
     { group: 'routing', items: [
-      { id: 'providers', label: 'Providers', icon: <I.Server size={15} />, hint: PROVIDERS.filter(p => p.enabled).length },
-      { id: 'rules', label: 'Routing rules', icon: <I.Route size={15} /> },
       { id: 'domains', label: 'Relay domains', icon: <I.Globe size={15} />, hint: RELAY_DOMAINS.length },
-      { id: 'ratelimits', label: 'Rate limits', icon: <I.Gauge size={15} /> },
+      { id: 'rules', label: 'Routing rules', icon: <I.Route size={15} /> },
     ]},
-    { group: 'access', items: [
-      { id: 'accounts', label: 'Accounts', icon: <I.Key size={15} />, hint: ACCOUNTS.filter(a => a.enabled).length },
+    { group: 'outgoing', items: [
+      { id: 'providers', label: 'Providers', icon: <I.Server size={15} />, hint: PROVIDERS.filter(p => p.enabled).length },
+      { id: 'dkim', label: 'DKIM keys', icon: <I.Shield size={15} /> },
+      { id: 'ratelimits_out', label: 'Outbound limits', icon: <I.Gauge size={15} /> },
     ]},
-    { group: 'system', items: [
+    { group: 'observe', items: [
+      { id: 'messages', label: 'Messages', icon: <I.Mail size={15} />, hint: 'trace' },
+      { id: 'queue', label: 'Queue', icon: <I.Layers size={15} />, hint: queueDepth },
+      { id: 'suppressions', label: 'Suppressions', icon: <I.Ban size={15} />, hint: (SUPPRESSIONS || []).length || undefined },
+      { id: 'audit', label: 'Audit log', icon: <I.List size={15} /> },
+      { id: 'operators', label: 'Operators', icon: <I.Users size={15} /> },
       { id: 'settings', label: 'Settings', icon: <I.Settings size={15} /> },
     ]},
   ];

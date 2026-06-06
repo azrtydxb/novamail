@@ -56,7 +56,10 @@ function StatusDot({ status, size = 6, pulse }) {
 }
 
 /* ---- Sparkline ---- */
-function Sparkline({ data, w = 120, h = 32, color = 'var(--accent)', fill = true, strokeWidth = 1.5 }) {
+function Sparkline({ data: rawData, w = 120, h = 32, color = 'var(--accent)', fill = true, strokeWidth = 1.5 }) {
+  // Sanitize: drop non-finite values so a stray undefined can't NaN the path.
+  const data = (rawData || []).map((v) => (Number.isFinite(v) ? v : 0));
+  while (data.length < 2) data.push(0);
   const max = Math.max(...data), min = Math.min(...data);
   const range = max - min || 1;
   const pts = data.map((v, i) => {
