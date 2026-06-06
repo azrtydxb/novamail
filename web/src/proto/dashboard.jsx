@@ -146,10 +146,10 @@ function Dashboard({ live, onNavigate, onOpenMessage, layout = 'overview' }) {
 
   const stats = (
     <>
-      <StatCard label="Relayed · 24h" value={fmtNum(METRICS.relayed24h)} delta="+8.4% vs yesterday" deltaTone="good" spark={SERIES.relayed} />
-      <StatCard label="Accept rate" value={METRICS.acceptRate} unit="%" delta="within SLA" deltaTone="good" spark={SERIES.relayed.map(v => v * 0.99)} sparkColor="var(--accent-good)" />
-      <StatCard label="Deferred · 24h" value={fmtNum(METRICS.deferred24h)} delta="+12 last hour" deltaTone="warn" spark={SERIES.deferred} sparkColor="var(--accent-warn)" />
-      <StatCard label="Bounced · 24h" value={fmtNum(METRICS.bounced24h)} delta="0.36% of volume" deltaTone="danger" spark={SERIES.bounced} sparkColor="var(--accent-danger)" />
+      <StatCard label="Relayed · 24h" value={fmtNum(METRICS.relayed24h)} spark={SERIES.relayed} />
+      <StatCard label="Accept rate" value={METRICS.acceptRate} unit="%" spark={SERIES.relayed} sparkColor="var(--accent-good)" />
+      <StatCard label="Deferred · 24h" value={fmtNum(METRICS.deferred24h)} spark={SERIES.deferred} sparkColor="var(--accent-warn)" />
+      <StatCard label="Bounced · 24h" value={fmtNum(METRICS.bounced24h)} spark={SERIES.bounced} sparkColor="var(--accent-danger)" />
     </>
   );
 
