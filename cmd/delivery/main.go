@@ -264,7 +264,16 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 				}
 			}
 		}
-		res, _ := p.Send(hctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
+		res, serr := p.Send(hctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
+		// A non-nil error must never be read as a successful delivery: if a
+		// provider returns an error with a zero-value (Delivered) outcome, treat
+		// it as a transient defer so we never GC the body / ack a failed send.
+		if serr != nil && res.Outcome == providers.Delivered {
+			res.Outcome = providers.Defer
+			if res.Detail == "" {
+				res.Detail = serr.Error()
+			}
+		}
 		lastProvider, lastDetail = p.Name(), res.Detail
 		if res.Outcome == providers.Delivered {
 			relayed.Inc()
