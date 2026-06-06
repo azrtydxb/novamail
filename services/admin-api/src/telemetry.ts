@@ -101,7 +101,30 @@ export async function getMetrics() {
   };
 }
 
+// purgeQueue empties a queue via the RabbitMQ management API.
+async function purgeQueue(name: string): Promise<boolean> {
+  const m = mgmt();
+  try {
+    const res = await fetch(`${m.base}/api/queues/%2F/${encodeURIComponent(name)}/contents`, {
+      method: "DELETE",
+      headers: { authorization: m.auth },
+      signal: AbortSignal.timeout(4000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function registerTelemetry(app: FastifyInstance): void {
   app.get("/api/queues", async () => getQueues());
   app.get("/api/metrics", async () => getMetrics());
+  app.post("/api/queues/:name/purge", async (req, reply) => {
+    const name = (req.params as { name: string }).name;
+    if (!name.startsWith("relay.") && !name.startsWith("wait.")) {
+      return reply.code(400).send({ error: "refusing to purge non-relay queue" });
+    }
+    const ok = await purgeQueue(name);
+    return reply.code(ok ? 200 : 502).send({ purged: ok, queue: name });
+  });
 }

@@ -67,6 +67,49 @@ func nullStr(s string) any {
 	return s
 }
 
+// GetSettingInt returns an integer setting, or def if absent/unparseable.
+func (d *DB) GetSettingInt(ctx context.Context, key string, def int64) int64 {
+	var v int64
+	err := d.pool.QueryRow(ctx, "SELECT (value#>>'{}')::bigint FROM settings WHERE key=$1", key).Scan(&v)
+	if err != nil {
+		return def
+	}
+	return v
+}
+
+// PruneOld deletes terminal messages and old events beyond the retention window.
+// message_events cascade with their message; events for live messages are kept.
+func (d *DB) PruneOld(ctx context.Context, days int) (int64, error) {
+	tag, err := d.pool.Exec(ctx,
+		`DELETE FROM messages
+		  WHERE status IN ('relayed','bounced','failed')
+		    AND updated_at < now() - make_interval(days => $1)`, days)
+	if err != nil {
+		return 0, fmt.Errorf("prune messages: %w", err)
+	}
+	return tag.RowsAffected(), nil
+}
+
+// ActiveBodyRefs returns the set of body keys still referenced by a non-terminal
+// message (queued/deferred) — everything else on the body volume is an orphan.
+func (d *DB) ActiveBodyRefs(ctx context.Context) (map[string]bool, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT body_ref FROM messages WHERE status IN ('queued','deferred')`)
+	if err != nil {
+		return nil, fmt.Errorf("active body refs: %w", err)
+	}
+	defer rows.Close()
+	set := map[string]bool{}
+	for rows.Next() {
+		var k string
+		if err := rows.Scan(&k); err != nil {
+			return nil, err
+		}
+		set[k] = true
+	}
+	return set, rows.Err()
+}
+
 // GetSecret returns the envelope-encrypted blob for a secret_ref, or "" if none.
 func (d *DB) GetSecret(ctx context.Context, ref string) (string, error) {
 	var env string

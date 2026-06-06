@@ -33,6 +33,11 @@ app.kubernetes.io/component: ingress
 {{- printf "%s/delivery:%s" .Values.image.registry $tag -}}
 {{- end -}}
 
+{{- define "novamail.maintenanceImage" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
+{{- printf "%s/maintenance:%s" .Values.image.registry $tag -}}
+{{- end -}}
+
 {{- define "novamail.delivery.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "novamail.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}

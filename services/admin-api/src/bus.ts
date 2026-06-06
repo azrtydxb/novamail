@@ -2,6 +2,7 @@ import amqp from "amqplib";
 import { nextEpoch } from "./db.js";
 
 const CONFIG_EXCHANGE = "config.changed";
+const WORK_EXCHANGE = "relay.work";
 
 let chan: amqp.Channel | null = null;
 
@@ -31,6 +32,17 @@ export async function publishConfigChanged(slices: string[]): Promise<void> {
     changedAt: new Date().toISOString(),
   };
   chan.publish(CONFIG_EXCHANGE, "", Buffer.from(JSON.stringify(event)), {
+    contentType: "application/json",
+  });
+}
+
+// publishRelayJob re-injects a job into the work exchange (operator requeue),
+// keyed on recipient domain so it lands in the right per-domain queue.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function publishRelayJob(job: any): Promise<boolean> {
+  if (!chan) return false;
+  const key = job?.routingHints?.recipientDomain ?? "";
+  return chan.publish(WORK_EXCHANGE, key, Buffer.from(JSON.stringify(job)), {
     contentType: "application/json",
   });
 }
