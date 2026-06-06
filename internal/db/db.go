@@ -100,6 +100,37 @@ func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
 	return out, rows.Err()
 }
 
+// GetSuppressions loads the active suppression addresses (lowercased).
+func (d *DB) GetSuppressions(ctx context.Context) ([]string, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT address FROM suppressions WHERE expires_at IS NULL OR expires_at > now()`)
+	if err != nil {
+		return nil, fmt.Errorf("query suppressions: %w", err)
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			return nil, err
+		}
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// AddSuppression inserts/refreshes a suppression for an address (lowercased).
+func (d *DB) AddSuppression(ctx context.Context, address, reason, source, detail string) error {
+	_, err := d.pool.Exec(ctx,
+		`INSERT INTO suppressions (address, reason, source, detail) VALUES (lower($1),$2,$3,$4)
+		 ON CONFLICT (address) DO UPDATE SET reason=EXCLUDED.reason, source=EXCLUDED.source, detail=EXCLUDED.detail, created_at=now()`,
+		address, reason, source, detail)
+	if err != nil {
+		return fmt.Errorf("add suppression: %w", err)
+	}
+	return nil
+}
+
 // GetRelayDomains loads the set of permitted sender/relay domains (enabled).
 // An empty result means "no domain gate" (accept any sender domain).
 func (d *DB) GetRelayDomains(ctx context.Context) ([]string, error) {

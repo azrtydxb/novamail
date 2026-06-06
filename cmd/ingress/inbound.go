@@ -16,6 +16,7 @@ import (
 type inboundPolicy struct {
 	clients      []trustedClient
 	relayDomains map[string]bool // empty ⇒ no domain gate (accept any sender domain)
+	suppressed   map[string]bool // lowercased addresses to reject at RCPT
 	limiter      *ratelimit.Limiter
 }
 
@@ -26,7 +27,7 @@ type trustedClient struct {
 
 // buildInbound loads the submission policy from Postgres.
 func buildInbound(ctx context.Context, database *db.DB, logger *slog.Logger) *inboundPolicy {
-	p := &inboundPolicy{relayDomains: map[string]bool{}}
+	p := &inboundPolicy{relayDomains: map[string]bool{}, suppressed: map[string]bool{}}
 
 	clients, err := database.GetRelayClients(ctx)
 	if err != nil {
@@ -49,6 +50,14 @@ func buildInbound(ctx context.Context, database *db.DB, logger *slog.Logger) *in
 		p.relayDomains[strings.ToLower(d)] = true
 	}
 
+	supp, err := database.GetSuppressions(ctx)
+	if err != nil {
+		logger.Error("load suppressions", "err", err)
+	}
+	for _, a := range supp {
+		p.suppressed[strings.ToLower(a)] = true
+	}
+
 	limits, err := database.GetRateLimits(ctx)
 	if err != nil {
 		logger.Error("load rate limits", "err", err)
@@ -61,7 +70,7 @@ func buildInbound(ctx context.Context, database *db.DB, logger *slog.Logger) *in
 	}
 	p.limiter = ratelimit.Build(specs)
 
-	logger.Info("inbound policy loaded", "trustedClients", len(p.clients), "relayDomains", len(p.relayDomains), "inboundLimits", len(specs))
+	logger.Info("inbound policy loaded", "trustedClients", len(p.clients), "relayDomains", len(p.relayDomains), "inboundLimits", len(specs), "suppressed", len(p.suppressed))
 	return p
 }
 

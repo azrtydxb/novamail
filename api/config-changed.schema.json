@@ -35,7 +35,8 @@
           "dkim_keys",
           "tls_policy",
           "rate_limits",
-          "relay_clients"
+          "relay_clients",
+          "suppressions"
         ]
       }
     },

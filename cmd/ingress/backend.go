@@ -125,6 +125,9 @@ func (s *session) Mail(from string, opts *smtp.MailOptions) error {
 }
 
 func (s *session) Rcpt(to string, opts *smtp.RcptOptions) error {
+	if p := s.be.policy.Load(); p != nil && p.suppressed[strings.ToLower(to)] {
+		return &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "Recipient is on the suppression list"}
+	}
 	s.rcpts = append(s.rcpts, to)
 	s.rcptN++
 	if opts != nil {
