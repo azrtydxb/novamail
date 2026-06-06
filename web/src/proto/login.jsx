@@ -18,7 +18,6 @@ function Field({ label, type = 'text', value, onChange, placeholder, autoFocus }
 }
 
 function Login({ onSignIn }) {
-  const [tab, setTab] = useLoginState('signin');
   const [user, setUser] = useLoginState('admin@novamail.local');
   const [pass, setPass] = useLoginState('');
   const [err, setErr] = useLoginState('');
@@ -44,21 +43,11 @@ function Login({ onSignIn }) {
         </div>
 
         <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 12, padding: 26, boxShadow: 'var(--shadow-md)' }}>
-          <div className="mono" style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8 }}>// {tab === 'signin' ? 'authenticate' : 'register'}</div>
+          <div className="mono" style={{ fontSize: 11, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--accent)', marginBottom: 8 }}>// authenticate</div>
           <div style={{ fontFamily: 'var(--font-display)', fontSize: 22, fontWeight: 600, letterSpacing: '-0.01em', color: 'var(--fg)', marginBottom: 18 }}>
-            {tab === 'signin' ? 'Welcome back' : 'Create operator account'}
+            Welcome back
           </div>
 
-          {/* tab strip */}
-          <div style={{ display: 'flex', gap: 18, borderBottom: '1px solid var(--line)', marginBottom: 18 }}>
-            {['signin', 'register'].map(tb => (
-              <button key={tb} onClick={() => setTab(tb)} className="mono" style={{
-                fontSize: 12, letterSpacing: '0.04em', textTransform: 'uppercase', padding: '0 0 9px', whiteSpace: 'nowrap',
-                color: tab === tb ? 'var(--fg)' : 'var(--fg-3)',
-                borderBottom: '2px solid', borderColor: tab === tb ? 'var(--accent)' : 'transparent', marginBottom: -1,
-              }}>{tb === 'signin' ? 'sign in' : 'register'}</button>
-            ))}
-          </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
             <Field label="email" value={user} onChange={setUser} placeholder="you@domain.com" autoFocus />
@@ -73,21 +62,7 @@ function Login({ onSignIn }) {
             }}
               onMouseEnter={(e) => e.currentTarget.style.filter = 'brightness(1.08)'}
               onMouseLeave={(e) => e.currentTarget.style.filter = 'none'}
-            >{busy ? 'signing in…' : (tab === 'signin' ? 'sign in' : 'create account')}<I.ArrowRight size={14} /></button>
-
-            {/* divider */}
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '4px 0' }}>
-              <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
-              <span className="mono" style={{ fontSize: 10.5, color: 'var(--fg-4)' }}>OR</span>
-              <span style={{ flex: 1, height: 1, background: 'var(--line)' }} />
-            </div>
-            <button onClick={() => window.nmToast('SSO is not configured', 'danger')} className="mono" style={{
-              padding: '10px', borderRadius: 7, background: 'var(--bg-2)', border: '1px solid var(--line)',
-              color: 'var(--fg-1)', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, whiteSpace: 'nowrap',
-            }}
-              onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--line-strong)'}
-              onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--line)'}
-            ><I.Shield size={14} />continue with SSO</button>
+            >{busy ? 'signing in…' : 'sign in'}<I.ArrowRight size={14} /></button>
           </div>
 
           <div style={{ borderTop: '1px dashed var(--line)', marginTop: 18, paddingTop: 13 }}>

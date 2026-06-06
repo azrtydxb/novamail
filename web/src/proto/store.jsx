@@ -135,7 +135,7 @@ async function save(coll, f, item) {
     const body = { recipient_domain: unstar(f.recipient_domain), sender_domain: unstar(f.sender_domain), provider_chain: f.provider_chain, priority: Number(f.priority), enabled: !!f.enabled };
     item ? await api(`/routing-rules/${item.id}`, { method: 'PUT', body }) : await api('/routing-rules', { method: 'POST', body });
   } else if (coll === 'domains') {
-    if (!item) await api('/relay-domains', { method: 'POST', body: { domain: f.domain, enabled: !!f.verified || true } });
+    if (!item) await api('/relay-domains', { method: 'POST', body: { domain: f.domain, enabled: f.enabled !== false } });
   } else if (coll === 'ratelimits') {
     const body = { direction: f.direction || 'out', scope: f.scope || 'recipient_domain', scope_value: f.domain, per_second: Number(f.per_second), burst: Number(f.burst), enabled: !!f.enabled };
     item ? await api(`/rate-limits/${item.id}`, { method: 'PUT', body }) : await api('/rate-limits', { method: 'POST', body });
