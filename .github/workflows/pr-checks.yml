@@ -46,6 +46,7 @@ jobs:
         run: |
           npm ci
           npm run build
+          npm test
       - working-directory: web
         run: |
           npm ci
