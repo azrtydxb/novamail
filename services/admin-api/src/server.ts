@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import { ping } from "./db.js";
 import { connect, ready } from "./bus.js";
 import { registerRoutes } from "./routes.js";
+import { registerTelemetry } from "./telemetry.js";
 
 const app = Fastify({ logger: true });
 
@@ -28,6 +29,7 @@ app.get("/readyz", async (_req, reply) => {
 });
 
 registerRoutes(app);
+registerTelemetry(app);
 
 const port = Number(process.env.PORT ?? 3000);
 

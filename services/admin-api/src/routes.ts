@@ -17,7 +17,7 @@ interface Resource {
 const RESOURCES: Record<string, Resource> = {
   providers: { table: "providers", slice: "providers", pk: "id", cols: ["name", "type", "endpoint", "auth_mode", "enabled", "secret_ref"] },
   "routing-rules": { table: "routing_rules", slice: "routing_rules", pk: "id", cols: ["recipient_domain", "sender_domain", "provider_chain", "priority", "enabled"] },
-  "relay-domains": { table: "relay_domains", slice: "relay_domains", pk: "domain", cols: ["domain"] },
+  "relay-domains": { table: "relay_domains", slice: "relay_domains", pk: "domain", cols: ["domain", "enabled"] },
   "rate-limits": { table: "rate_limits", slice: "rate_limits", pk: "domain", cols: ["domain", "per_second", "burst", "enabled"] },
   "dkim-keys": { table: "dkim_keys", slice: "dkim_keys", pk: "id", cols: ["domain", "selector", "private_ref", "public_key", "rotation"] },
   "tls-policy": { table: "tls_policy", slice: "tls_policy", pk: "id", cols: ["min_version", "starttls_required", "provider_id"] },
@@ -81,7 +81,7 @@ export function registerRoutes(app: FastifyInstance): void {
   // Accounts: passwords are hashed here; the hash is never returned.
   app.get("/api/accounts", async () => {
     const { rows } = await pool.query(
-      "SELECT id, username, allowed_sender_domains, ip_allowlist, created_at FROM accounts ORDER BY username",
+      "SELECT id, username, allowed_sender_domains, ip_allowlist, enabled, created_at FROM accounts ORDER BY username",
     );
     return rows;
   });
@@ -97,6 +97,26 @@ export function registerRoutes(app: FastifyInstance): void {
     );
     await publishConfigChanged(["accounts"]);
     return reply.code(201).send(rows[0]);
+  });
+
+  app.put("/api/accounts/:id", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const b = req.body as { allowed_sender_domains?: string[]; enabled?: boolean; password?: string };
+    const sets: string[] = [];
+    const vals: unknown[] = [];
+    if (b.allowed_sender_domains !== undefined) { vals.push(b.allowed_sender_domains); sets.push(`allowed_sender_domains=$${vals.length}`); }
+    if (b.enabled !== undefined) { vals.push(b.enabled); sets.push(`enabled=$${vals.length}`); }
+    if (b.password) { vals.push(await bcrypt.hash(b.password, 10)); sets.push(`password_hash=$${vals.length}`); }
+    if (sets.length === 0) return reply.code(400).send({ error: "no writable fields" });
+    vals.push(id);
+    const { rows } = await pool.query(
+      `UPDATE accounts SET ${sets.join(",")} WHERE id=$${vals.length}
+       RETURNING id, username, allowed_sender_domains, enabled`,
+      vals,
+    );
+    if (rows.length === 0) return reply.code(404).send({ error: "not found" });
+    await publishConfigChanged(["accounts"]);
+    return rows[0];
   });
 
   app.delete("/api/accounts/:id", async (req, reply) => {

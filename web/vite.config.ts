@@ -10,6 +10,8 @@ export default defineConfig({
       "/api": {
         target: process.env.VITE_API_TARGET ?? "http://localhost:3000",
         changeOrigin: true,
+        // dev only: inject the admin API key (nginx does this in production)
+        headers: process.env.ADMIN_API_KEY ? { "x-api-key": process.env.ADMIN_API_KEY } : undefined,
       },
     },
   },
