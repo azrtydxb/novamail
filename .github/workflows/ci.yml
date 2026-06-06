@@ -55,6 +55,11 @@ jobs:
         run: |
           npm ci
           npm run build
+      - name: web typecheck + build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
 
   build-image:
     needs: [test, lint, helm-lint, node-check]
@@ -122,8 +127,39 @@ jobs:
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true
 
+  build-web:
+    needs: [test, lint, helm-lint, node-check]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: arc-azrtydxb-publish
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compute image tag
+        id: meta
+        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+      - name: Set up buildx (zot insecure)
+        run: |
+          cat > /tmp/buildkitd.toml <<'EOF'
+          [registry."192.168.10.123:5000"]
+            insecure = true
+          EOF
+          docker buildx create --name nm --driver docker-container \
+            --platform linux/arm64 --buildkitd-config /tmp/buildkitd.toml --use
+          docker buildx inspect --bootstrap
+      - name: Build & push web (arm64 → zot)
+        uses: docker/build-push-action@v6
+        with:
+          context: web
+          builder: nm
+          platforms: linux/arm64
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}/web:${{ steps.meta.outputs.tag }}
+            ${{ env.IMAGE_BASE }}/web:main
+          cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64,mode=max,image-manifest=true
+
   deploy:
-    needs: [build-image, build-admin-api]
+    needs: [build-image, build-admin-api, build-web]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # No `container:` — run on the runner pod itself so the in-cluster
     # ServiceAccount token (mounted at the standard path) is available.
@@ -158,3 +194,4 @@ jobs:
           kubectl -n novamail rollout status deploy/novamail-delivery --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-dsn --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-admin-api --timeout=120s
+          kubectl -n novamail rollout status deploy/novamail-web --timeout=120s
