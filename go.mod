@@ -10,6 +10,7 @@ require (
 	github.com/prometheus/client_golang v1.20.5
 	github.com/rabbitmq/amqp091-go v1.10.0
 	golang.org/x/crypto v0.52.0
+	golang.org/x/time v0.15.0
 )
 
 require (

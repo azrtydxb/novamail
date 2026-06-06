@@ -48,7 +48,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 ## M3 — Providers + routing
 - [x] Providers: Gmail/XOAUTH2 (token refresh), Amazon SES, Microsoft 365 (factory; live creds via M4 secret store).
 - [x] Routing engine: recipient-domain → sender-domain → default; per-rule enable + failover chains (DB-driven).
-- [ ] Per-domain rate limiting (consumer prefetch/QoS + token budget). [remaining M3]
+- [x] Per-domain rate limiting (token bucket per recipient domain, DB-driven).
 
 ## M4 — Management plane
 - [ ] `services/admin-api` (Fastify + TS): REST over Postgres config schema, validation, `config.changed` fanout publish.
