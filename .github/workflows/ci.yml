@@ -1,9 +1,10 @@
 name: CI
 
+# Runs only on merges to main: build images + deploy. PR validation
+# (go test/vet, lint, helm lint, node build) lives in pr-checks.yml, so nothing
+# is duplicated between the two workflows.
 on:
   push:
-    branches: [main]
-  pull_request:
     branches: [main]
 
 concurrency:
@@ -16,54 +17,7 @@ env:
   IMAGE_BASE: 192.168.10.123:5000/azrtydxb/novamail
 
 jobs:
-  test:
-    runs-on: arc-azrtydxb
-    container:
-      image: golang:1.25
-    steps:
-      - uses: actions/checkout@v4
-      - name: go vet
-        run: go vet ./...
-      - name: go test (race)
-        run: go test -race ./...
-
-  lint:
-    runs-on: arc-azrtydxb
-    container:
-      image: golangci/golangci-lint:v2.10.1
-    steps:
-      - uses: actions/checkout@v4
-      - run: golangci-lint run ./...
-
-  helm-lint:
-    runs-on: arc-azrtydxb
-    steps:
-      - uses: actions/checkout@v4
-      - uses: azure/setup-helm@v4
-        with:
-          version: v3.16.2
-      - run: helm lint deploy/helm/novamail
-
-  node-check:
-    runs-on: arc-azrtydxb
-    container:
-      image: node:24
-    steps:
-      - uses: actions/checkout@v4
-      - name: admin-api typecheck + build
-        working-directory: services/admin-api
-        run: |
-          npm ci
-          npm run build
-      - name: web typecheck + build
-        working-directory: web
-        run: |
-          npm ci
-          npm run build
-
   build-image:
-    needs: [test, lint, helm-lint, node-check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-azrtydxb-publish
     strategy:
       matrix:
@@ -87,7 +41,7 @@ jobs:
         with:
           context: .
           builder: nm
-          # The Go Dockerfile cross-compiles (no QEMU); the runtime stage only COPYs.
+          # Multi-arch (arm64 for kw + amd64 for portability). Go cross-compiles (no QEMU).
           platforms: linux/arm64,linux/amd64
           build-args: SERVICE=${{ matrix.service }}
           push: true
@@ -98,8 +52,6 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true
 
   build-admin-api:
-    needs: [test, lint, helm-lint, node-check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-azrtydxb-publish
     steps:
       - uses: actions/checkout@v4
@@ -113,14 +65,14 @@ jobs:
             insecure = true
           EOF
           docker buildx create --name nm --driver docker-container \
-            --platform linux/arm64 --buildkitd-config /tmp/buildkitd.toml --use
+            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      - name: Build & push admin-api (arm64 → zot)
+      - name: Build & push admin-api (multi-arch → zot)
         uses: docker/build-push-action@v6
         with:
           context: services/admin-api
           builder: nm
-          platforms: linux/arm64
+          platforms: linux/arm64,linux/amd64
           push: true
           tags: |
             ${{ env.IMAGE_BASE }}/admin-api:${{ steps.meta.outputs.tag }}
@@ -129,8 +81,6 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true
 
   build-web:
-    needs: [test, lint, helm-lint, node-check]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: arc-azrtydxb-publish
     steps:
       - uses: actions/checkout@v4
@@ -144,14 +94,14 @@ jobs:
             insecure = true
           EOF
           docker buildx create --name nm --driver docker-container \
-            --platform linux/arm64 --buildkitd-config /tmp/buildkitd.toml --use
+            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      - name: Build & push web (arm64 → zot)
+      - name: Build & push web (multi-arch → zot)
         uses: docker/build-push-action@v6
         with:
           context: web
           builder: nm
-          platforms: linux/arm64
+          platforms: linux/arm64,linux/amd64
           push: true
           tags: |
             ${{ env.IMAGE_BASE }}/web:${{ steps.meta.outputs.tag }}
@@ -161,7 +111,6 @@ jobs:
 
   deploy:
     needs: [build-image, build-admin-api, build-web]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     # No `container:` — run on the runner pod itself so the in-cluster
     # ServiceAccount token (mounted at the standard path) is available.
     runs-on: arc-azrtydxb
