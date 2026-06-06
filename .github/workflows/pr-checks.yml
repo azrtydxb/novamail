@@ -36,8 +36,19 @@ jobs:
           version: v3.16.2
       - run: helm lint deploy/helm/novamail
 
+  node-check:
+    runs-on: arc-azrtydxb
+    container:
+      image: node:24
+    steps:
+      - uses: actions/checkout@v4
+      - working-directory: services/admin-api
+        run: |
+          npm ci
+          npm run build
+
   all-checks-passed:
-    needs: [test, lint, helm-lint]
+    needs: [test, lint, helm-lint, node-check]
     if: always()
     runs-on: arc-azrtydxb
     steps:
@@ -45,4 +56,5 @@ jobs:
         run: |
           [ "${{ needs.test.result }}" = "success" ] &&
           [ "${{ needs.lint.result }}" = "success" ] &&
-          [ "${{ needs.helm-lint.result }}" = "success" ] || exit 1
+          [ "${{ needs.helm-lint.result }}" = "success" ] &&
+          [ "${{ needs.node-check.result }}" = "success" ] || exit 1
