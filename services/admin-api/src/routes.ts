@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import bcrypt from "bcryptjs";
 import { pool } from "./db.js";
 import { publishConfigChanged } from "./bus.js";
+import { encrypt } from "./secrets.js";
 
 // Generic config resource: which table, which config.changed slice, the
 // writable columns, and the primary key. The Admin API validates that only
@@ -103,6 +104,42 @@ export function registerRoutes(app: FastifyInstance): void {
     const { rowCount } = await pool.query("DELETE FROM accounts WHERE id=$1", [id]);
     if (!rowCount) return reply.code(404).send({ error: "not found" });
     await publishConfigChanged(["accounts"]);
+    return reply.code(204).send();
+  });
+
+  // Secrets: provider credentials / DKIM keys, envelope-encrypted at rest.
+  // The plaintext is never returned or logged; only refs are listable.
+  app.get("/api/secrets", async () => {
+    const { rows } = await pool.query("SELECT ref, updated_at FROM secrets ORDER BY ref");
+    return rows;
+  });
+
+  app.put("/api/secrets/:ref", async (req, reply) => {
+    const ref = (req.params as { ref: string }).ref;
+    const value = (req.body as { value?: unknown }).value;
+    if (value === undefined) return reply.code(400).send({ error: "value required" });
+    // value may be an object (e.g. {username,password}) or a raw string (DKIM PEM).
+    const plaintext = typeof value === "string" ? value : JSON.stringify(value);
+    let envelope: string;
+    try {
+      envelope = encrypt(plaintext);
+    } catch (e) {
+      return reply.code(500).send({ error: (e as Error).message });
+    }
+    await pool.query(
+      `INSERT INTO secrets (ref, envelope, updated_at) VALUES ($1,$2,now())
+       ON CONFLICT (ref) DO UPDATE SET envelope=EXCLUDED.envelope, updated_at=now()`,
+      [ref, envelope],
+    );
+    await publishConfigChanged(["providers", "dkim_keys"]);
+    return reply.code(204).send();
+  });
+
+  app.delete("/api/secrets/:ref", async (req, reply) => {
+    const ref = (req.params as { ref: string }).ref;
+    const { rowCount } = await pool.query("DELETE FROM secrets WHERE ref=$1", [ref]);
+    if (!rowCount) return reply.code(404).send({ error: "not found" });
+    await publishConfigChanged(["providers", "dkim_keys"]);
     return reply.code(204).send();
   });
 

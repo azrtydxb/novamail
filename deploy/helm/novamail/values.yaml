@@ -20,6 +20,11 @@ secrets:
   postgres: novamail-postgres
   rabbitmq: novamail-rabbitmq
 
+# Master key (KEK) for envelope-encrypting provider creds + DKIM keys at rest.
+# Secret key: NOVAMAIL_SECRET_KEY (base64 of 32 random bytes). Mounted into the
+# admin-api (encrypt) and delivery (decrypt).
+secretKeySecret: novamail-secret-key
+
 ingressApp:
   replicas: 1
   resources:

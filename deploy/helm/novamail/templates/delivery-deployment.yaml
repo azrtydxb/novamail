@@ -37,6 +37,12 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            - name: NOVAMAIL_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretKeySecret }}
+                  key: NOVAMAIL_SECRET_KEY
+                  optional: true
             {{- if .Values.delivery.dkim.enabled }}
             - name: NOVAMAIL_DKIM_DOMAIN
               value: {{ .Values.delivery.dkim.domain | quote }}

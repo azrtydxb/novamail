@@ -58,6 +58,19 @@ func (d *DB) Authenticate(ctx context.Context, username, password string) (*mode
 	return &acc, nil
 }
 
+// GetSecret returns the envelope-encrypted blob for a secret_ref, or "" if none.
+func (d *DB) GetSecret(ctx context.Context, ref string) (string, error) {
+	var env string
+	err := d.pool.QueryRow(ctx, "SELECT envelope FROM secrets WHERE ref=$1", ref).Scan(&env)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("get secret: %w", err)
+	}
+	return env, nil
+}
+
 // GetRateLimits loads all enabled per-domain rate limits.
 func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
 	rows, err := d.pool.Query(ctx,

@@ -54,7 +54,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] `services/admin-api` (Fastify + TS): REST over Postgres config schema, validation, `config.changed` fanout publish.
 - [ ] Hot reload: data-plane services cache config, subscribe to fanout, reload affected slice live.
 - [ ] `web` (React + Vite): config UI (providers/rules/domains/accounts) + message-tracing UI (`message_events`).
-- [ ] Secrets: envelope-encryption for provider creds + DKIM keys at rest.
+- [x] Secrets: envelope-encryption (AES-256-GCM, Go decrypt + TS encrypt, KEK from secret) for provider creds; managed via Admin API.
 
 ## M5 — Packaging
 - [ ] Helm chart hardening (HA defaults), docker-compose, systemd units.
