@@ -4,9 +4,38 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project status
 
-This is a **greenfield, spec-driven** project. As of this writing the repo contains only `LICENSE` (Apache 2.0) and `smtp-relay-handover-spec.md`. No code, build tooling, or migrations exist yet.
+Milestones **M0–M5 are implemented and running on the kw cluster.** The relay does authenticated, TLS, DKIM-signed, DB-routed delivery with failover, retry tiers, bounces, per-domain rate limiting, a management GUI + Admin API with live config hot-reload, and envelope-encrypted credentials. See `TODO.md` for the milestone checklist and `smtp-relay-handover-spec.md` for the build contract (when spec and code disagree, the spec wins).
 
-**`smtp-relay-handover-spec.md` is the build contract.** Read it before implementing anything — it defines scope, architecture, the data model, message-bus topology, and the milestone build order (M1–M5). When the spec and this file disagree, the spec wins; update this file as code lands.
+Remaining/parked: live Gmail/SES/M365 credential testing (needs real provider accounts). The cluster also runs a Mailpit test sink (`deploy/cluster/deps/mailpit.yaml`) used as the generic-smarthost upstream for verification.
+
+## Repository layout (actual)
+
+```
+/cmd            ingress/ delivery/ dsn/      # Go data-plane binaries
+/internal       model/ store/ db/ amqp/ providers/ routing/ ratelimit/ dkim/ secrets/
+/services/admin-api                          # Fastify + TypeScript management API
+/web                                         # React + Vite GUI (served by nginx, proxies /api)
+/api                                         # versioned JSON Schema contracts
+/migrations     0001..0004 *.sql             # applied in order by deploy/cluster/deps/migrate-job
+/deploy
+  helm/novamail        # the chart CI deploys (ingress, delivery, dsn, admin-api, web, PVC, PDBs, cert)
+  cluster/             # one-time bootstrap: RBAC, deps (postgres, rabbitmq-cluster, mailpit), README
+  docker-compose/      # single-host stack
+  systemd/             # bare-metal units
+Taskfile.yml           # build/test/lint
+```
+
+## Commands
+
+- **Go**: `go build ./...`, `go test ./...` (CI runs `go test -race`), `go vet ./...`, `~/go/bin/golangci-lint run ./...` (config `.golangci.yml`, v2). `go.mod` is on **Go 1.25** — keep CI (`golang:1.25`) and the Dockerfile `GO_VERSION` in lockstep.
+- **Admin API** (`services/admin-api`): `npm ci && npm run build` (tsc). **Web** (`web`): `npm ci && npm run build` (vite).
+- **Helm**: `helm lint deploy/helm/novamail`; render with `helm template novamail deploy/helm/novamail -n novamail --set image.tag=t`.
+
+## CI/CD + cluster (kw)
+
+PR → `pr-checks.yml` (go test/vet, golangci-lint, helm lint, node-check) → merge to `main` → `ci.yml` builds images on ARC runners (Go services multi-arch arm64+amd64; admin-api + web arm64) → push to Zot → `helm upgrade --install` into the `novamail` namespace → rollout. Images are **pulled via their `ghcr.io/...` name** (containerd mirrors ghcr.io → the Zot registry at `192.168.10.123`, cluster-CA TLS). The deploy job runs on the runner pod using a kubeconfig built from its in-cluster SA token (RBAC in `deploy/cluster/bootstrap-rbac.yaml`). 3-node RabbitMQ runs via the **RabbitMQ Cluster Operator** (`nova-bus`).
+
+Two ARM64 CI gotchas (already handled): JS actions (`actions/checkout`) can't run in **Alpine** containers on arm64 runners (use `azure/setup-*`, not `alpine/*` images); and non-root runners can't write `/usr/local/bin`.
 
 ## What this is
 
