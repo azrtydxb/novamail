@@ -45,6 +45,10 @@ type RelayJob struct {
 	RoutingHints RoutingHints `json:"routingHints,omitempty"`
 	Attempt      int          `json:"attempt"`
 	EnqueuedAt   time.Time    `json:"enqueuedAt"`
+	// RFC 3461 DSN hints (optional). DSNSuppress is set when the sender requested
+	// NOTIFY=NEVER for all recipients; DSNReturn is RET=FULL|HDRS.
+	DSNReturn   string `json:"dsnReturn,omitempty"`
+	DSNSuppress bool   `json:"dsnSuppress,omitempty"`
 }
 
 // RelayJobVersion is the current schema version.

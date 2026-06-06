@@ -113,8 +113,10 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 	_ = g.db.RecordAttempt(hctx, job.MessageID, model.StatusBounced, "bounced", "dsn", detail)
 
 	// Null sender (<>) means this is already a bounce — never bounce a bounce.
-	if job.Envelope.MailFrom == "" {
-		g.log.Warn("double-bounce suppressed", "id", job.MessageID)
+	// NOTIFY=NEVER (DSNSuppress) means the sender asked for no failure notice.
+	if job.Envelope.MailFrom == "" || job.DSNSuppress {
+		_ = g.store.Delete(hctx, job.BodyRef.Key)
+		g.log.Warn("DSN suppressed", "id", job.MessageID, "reason", suppressReason(&job))
 		_ = d.Ack(false)
 		return
 	}
@@ -152,6 +154,13 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 	_ = g.store.Delete(hctx, job.BodyRef.Key)
 	g.log.Info("bounce generated", "original", job.MessageID, "dsn", dsnID, "to", job.Envelope.MailFrom)
 	_ = d.Ack(false)
+}
+
+func suppressReason(job *model.RelayJob) string {
+	if job.Envelope.MailFrom == "" {
+		return "null return-path (double-bounce)"
+	}
+	return "NOTIFY=NEVER"
 }
 
 func domainOf(addr string) string {

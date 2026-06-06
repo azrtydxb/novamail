@@ -47,10 +47,14 @@ func (b *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 type session struct {
 	be     *backend
 	ip     net.IP
-	auth   *model.Account  // set on successful SMTP AUTH
-	client *trustedClient  // set when the source IP is a trusted relay client
+	auth   *model.Account // set on successful SMTP AUTH
+	client *trustedClient // set when the source IP is a trusted relay client
 	from   string
 	rcpts  []string
+	// RFC 3461 DSN params
+	dsnReturn string
+	rcptN     int
+	neverN    int
 }
 
 // AuthMechanisms advertises PLAIN (offered only after TLS; see AllowInsecureAuth).
@@ -87,7 +91,10 @@ func (s *session) allowedSenders() []string {
 	return nil
 }
 
-func (s *session) Mail(from string, _ *smtp.MailOptions) error {
+func (s *session) Mail(from string, opts *smtp.MailOptions) error {
+	if opts != nil {
+		s.dsnReturn = string(opts.Return)
+	}
 	// Authorization: a valid SMTP AUTH session OR a trusted source IP.
 	if s.auth == nil && s.client == nil {
 		return &smtp.SMTPError{Code: 530, EnhancedCode: smtp.EnhancedCode{5, 7, 0}, Message: "Authentication required (or relay from a trusted IP)"}
@@ -117,8 +124,16 @@ func (s *session) Mail(from string, _ *smtp.MailOptions) error {
 	return nil
 }
 
-func (s *session) Rcpt(to string, _ *smtp.RcptOptions) error {
+func (s *session) Rcpt(to string, opts *smtp.RcptOptions) error {
 	s.rcpts = append(s.rcpts, to)
+	s.rcptN++
+	if opts != nil {
+		for _, n := range opts.Notify {
+			if n == smtp.DSNNotifyNever {
+				s.neverN++
+			}
+		}
+	}
 	return nil
 }
 
@@ -162,6 +177,9 @@ func (s *session) Data(r io.Reader) error {
 		RoutingHints: model.RoutingHints{RecipientDomain: domainOf(s.rcpts), SenderDomain: domainOf([]string{s.from})},
 		Attempt:      0,
 		EnqueuedAt:   time.Now().UTC(),
+		DSNReturn:    s.dsnReturn,
+		// Suppress the bounce only if every recipient asked for NOTIFY=NEVER.
+		DSNSuppress: s.rcptN > 0 && s.neverN == s.rcptN,
 	}
 	if err := s.be.bus.Publish(ctx, job); err != nil {
 		// Body + metadata are durable; the message is recoverable. Surface a
@@ -179,6 +197,9 @@ func (s *session) Data(r io.Reader) error {
 func (s *session) Reset() {
 	s.from = ""
 	s.rcpts = nil
+	s.dsnReturn = ""
+	s.rcptN = 0
+	s.neverN = 0
 }
 
 func (s *session) Logout() error { return nil }
