@@ -32,6 +32,7 @@ import (
 	"github.com/azrtydxb/novamail/internal/providers"
 	"github.com/azrtydxb/novamail/internal/ratelimit"
 	"github.com/azrtydxb/novamail/internal/routing"
+	"github.com/azrtydxb/novamail/internal/secrets"
 	"github.com/azrtydxb/novamail/internal/store"
 )
 
@@ -79,8 +80,20 @@ func main() {
 
 	// Routing/rate-limit config is DB-driven (Postgres is the single source of
 	// truth). secretDir resolves credentials referenced by a provider's
-	// secret_ref. The snapshot is hot-reloaded on config.changed.
+	// secret_ref (file fallback). The snapshot is hot-reloaded on config.changed.
 	secretDir := env("NOVAMAIL_PROVIDER_SECRETS", "/etc/novamail/provider-secrets")
+
+	// Envelope-encryption key (KEK) for credentials stored in Postgres. Optional;
+	// when unset, only the file-mounted secret fallback is used.
+	var cipher *secrets.Cipher
+	if k := os.Getenv("NOVAMAIL_SECRET_KEY"); k != "" {
+		cipher, err = secrets.New(k)
+		if err != nil {
+			logger.Error("init secrets cipher", "err", err)
+			os.Exit(1)
+		}
+		logger.Info("envelope encryption enabled")
+	}
 
 	signer, err := dkim.Load(
 		os.Getenv("NOVAMAIL_DKIM_DOMAIN"),
@@ -96,7 +109,7 @@ func main() {
 	}
 
 	w := &worker{store: bodies, db: database, bus: bus, secretDir: secretDir, signer: signer, log: logger}
-	w.state.Store(buildState(initCtx, database, secretDir, logger))
+	w.state.Store(buildState(initCtx, database, cipher, secretDir, logger))
 
 	// Hot reload: rebuild the routing/rate-limit snapshot on each config.changed.
 	if err := bus.SubscribeConfig(func(body []byte) {
@@ -105,7 +118,7 @@ func main() {
 		logger.Info("config.changed received; reloading", "epoch", ev.Epoch, "slices", ev.Slices)
 		rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer rcancel()
-		w.state.Store(buildState(rctx, database, secretDir, logger))
+		w.state.Store(buildState(rctx, database, cipher, secretDir, logger))
 	}); err != nil {
 		logger.Error("subscribe config.changed", "err", err)
 		os.Exit(1)
@@ -297,7 +310,7 @@ func (w *worker) defer_(ctx context.Context, d amqp091.Delivery, job *model.Rela
 // buildState reads providers + routing rules + rate limits from Postgres and
 // builds an immutable snapshot. On a DB error it logs and returns whatever it
 // could build (so a transient blip never crashes the worker mid-run).
-func buildState(ctx context.Context, database *db.DB, secretDir string, logger *slog.Logger) *routeState {
+func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, secretDir string, logger *slog.Logger) *routeState {
 	provs, err := database.GetProviders(ctx)
 	if err != nil {
 		logger.Error("load providers", "err", err)
@@ -312,7 +325,7 @@ func buildState(ctx context.Context, database *db.DB, secretDir string, logger *
 	}
 	instances := make(map[string]providers.Provider, len(provs))
 	for _, p := range provs {
-		inst, err := providers.New(p, resolveCreds(secretDir, p.SecretRef))
+		inst, err := providers.New(p, resolveCreds(ctx, database, cipher, secretDir, p.SecretRef))
 		if err != nil {
 			logger.Error("build provider", "err", err, "provider", p.Name)
 			continue
@@ -327,14 +340,26 @@ func buildState(ctx context.Context, database *db.DB, secretDir string, logger *
 	}
 }
 
-// resolveCreds loads a provider's credentials from <secretDir>/<secretRef>, a
-// JSON file holding the secret bytes. The DB holds only the reference; the
-// secret store holds the material (never plaintext in Postgres). Missing/empty
-// ref → no credentials (e.g. IP-authed or in-cluster test sinks).
-func resolveCreds(secretDir, secretRef string) providers.Creds {
+// resolveCreds resolves a provider's credentials by secret_ref. It prefers the
+// envelope-encrypted secret stored in Postgres (decrypted with the KEK); failing
+// that it falls back to a JSON file under secretDir. The DB never holds
+// plaintext — only the encrypted envelope. Empty ref → no credentials.
+func resolveCreds(ctx context.Context, database *db.DB, cipher *secrets.Cipher, secretDir, secretRef string) providers.Creds {
 	if secretRef == "" {
 		return providers.Creds{}
 	}
+	// 1) Encrypted secret in Postgres.
+	if cipher != nil {
+		if env, err := database.GetSecret(ctx, secretRef); err == nil && env != "" {
+			if pt, derr := cipher.Decrypt(env); derr == nil {
+				var c providers.Creds
+				if json.Unmarshal(pt, &c) == nil {
+					return c
+				}
+			}
+		}
+	}
+	// 2) File fallback.
 	b, err := os.ReadFile(filepath.Join(secretDir, secretRef))
 	if err != nil {
 		return providers.Creds{}

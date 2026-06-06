@@ -47,6 +47,12 @@ spec:
                   name: {{ .Values.adminApi.apiKeySecret }}
                   key: NOVAMAIL_ADMIN_API_KEY
                   optional: true
+            - name: NOVAMAIL_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretKeySecret }}
+                  key: NOVAMAIL_SECRET_KEY
+                  optional: true
           envFrom:
             {{- include "novamail.depsEnvFrom" . | nindent 12 }}
           livenessProbe:
