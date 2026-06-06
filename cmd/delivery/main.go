@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -76,20 +77,10 @@ func main() {
 	}
 	defer func() { _ = bus.Close() }()
 
-	// Routing is DB-driven: providers and routing rules come from Postgres (the
-	// single source of truth). secretDir resolves credentials referenced by a
-	// provider's secret_ref. (M4 hot-reloads this on config.changed.)
+	// Routing/rate-limit config is DB-driven (Postgres is the single source of
+	// truth). secretDir resolves credentials referenced by a provider's
+	// secret_ref. The snapshot is hot-reloaded on config.changed.
 	secretDir := env("NOVAMAIL_PROVIDER_SECRETS", "/etc/novamail/provider-secrets")
-	engine, instances := loadRouting(initCtx, database, secretDir, logger)
-
-	// Per-recipient-domain rate limits (also from Postgres).
-	limits, err := database.GetRateLimits(initCtx)
-	if err != nil {
-		logger.Error("load rate limits", "err", err)
-		os.Exit(1)
-	}
-	limiter := ratelimit.Build(limits)
-	logger.Info("rate limits loaded", "domains", len(limits))
 
 	signer, err := dkim.Load(
 		os.Getenv("NOVAMAIL_DKIM_DOMAIN"),
@@ -104,10 +95,20 @@ func main() {
 		logger.Info("dkim signing enabled", "domain", signer.Domain())
 	}
 
-	w := &worker{
-		store: bodies, db: database, bus: bus,
-		engine: engine, instances: instances, limiter: limiter,
-		signer: signer, log: logger,
+	w := &worker{store: bodies, db: database, bus: bus, secretDir: secretDir, signer: signer, log: logger}
+	w.state.Store(buildState(initCtx, database, secretDir, logger))
+
+	// Hot reload: rebuild the routing/rate-limit snapshot on each config.changed.
+	if err := bus.SubscribeConfig(func(body []byte) {
+		var ev model.ConfigChanged
+		_ = json.Unmarshal(body, &ev)
+		logger.Info("config.changed received; reloading", "epoch", ev.Epoch, "slices", ev.Slices)
+		rctx, rcancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer rcancel()
+		w.state.Store(buildState(rctx, database, secretDir, logger))
+	}); err != nil {
+		logger.Error("subscribe config.changed", "err", err)
+		os.Exit(1)
 	}
 
 	// Health/metrics server.
@@ -141,24 +142,31 @@ func main() {
 	}
 }
 
+// routeState is an immutable snapshot of the DB-driven config, swapped
+// atomically on config.changed so handle() never reads a half-updated map.
+type routeState struct {
+	engine    *routing.Engine
+	instances map[string]providers.Provider // provider id → instance
+	limiter   *ratelimit.Limiter
+}
+
 type worker struct {
 	store     *store.FSStore
 	db        *db.DB
 	bus       *amqp.Conn
-	engine    *routing.Engine
-	instances map[string]providers.Provider // provider id → instance
-	limiter   *ratelimit.Limiter
+	secretDir string
+	state     atomic.Pointer[routeState]
 	signer    *dkim.Signer
 	log       *slog.Logger
 }
 
-// chain returns the ordered providers to try for a job, resolved from the DB
-// routing rules. An empty result means "no route" (the message is deferred).
-func (w *worker) chain(job *model.RelayJob) []providers.Provider {
-	ids := w.engine.Resolve(job.RoutingHints.RecipientDomain, job.RoutingHints.SenderDomain)
+// chain returns the ordered providers to try for a job, resolved from the
+// current snapshot. An empty result means "no route" (the message is deferred).
+func (w *worker) chain(st *routeState, job *model.RelayJob) []providers.Provider {
+	ids := st.engine.Resolve(job.RoutingHints.RecipientDomain, job.RoutingHints.SenderDomain)
 	out := make([]providers.Provider, 0, len(ids))
 	for _, id := range ids {
-		if p, ok := w.instances[id]; ok {
+		if p, ok := st.instances[id]; ok {
 			out = append(out, p)
 		}
 	}
@@ -186,7 +194,8 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 		return
 	}
 
-	chain := w.chain(&job)
+	st := w.state.Load()
+	chain := w.chain(st, &job)
 	if len(chain) == 0 {
 		// No route configured (yet): defer so it retries when config arrives.
 		w.defer_(hctx, d, &job, "no matching routing rule")
@@ -196,7 +205,7 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 	// Per-domain rate limiting: reserve a token for the recipient domain. Sleep
 	// for small delays; defer to a wait tier if the backlog is large so the
 	// consumer keeps flowing.
-	if delay, res, limited := w.limiter.Reserve(job.RoutingHints.RecipientDomain); limited {
+	if delay, res, limited := st.limiter.Reserve(job.RoutingHints.RecipientDomain); limited {
 		if delay > maxRateBlock {
 			res.Cancel()
 			w.defer_(hctx, d, &job, "rate limited: "+job.RoutingHints.RecipientDomain)
@@ -285,19 +294,21 @@ func (w *worker) defer_(ctx context.Context, d amqp091.Delivery, job *model.Rela
 	w.log.Warn("retries exhausted", "id", job.MessageID)
 }
 
-// loadRouting reads providers + routing rules from Postgres and builds the
-// routing engine plus a provider-instance map. Credentials are resolved from
-// the secret directory by each provider's secret_ref.
-func loadRouting(ctx context.Context, database *db.DB, secretDir string, logger *slog.Logger) (*routing.Engine, map[string]providers.Provider) {
+// buildState reads providers + routing rules + rate limits from Postgres and
+// builds an immutable snapshot. On a DB error it logs and returns whatever it
+// could build (so a transient blip never crashes the worker mid-run).
+func buildState(ctx context.Context, database *db.DB, secretDir string, logger *slog.Logger) *routeState {
 	provs, err := database.GetProviders(ctx)
 	if err != nil {
 		logger.Error("load providers", "err", err)
-		os.Exit(1)
 	}
 	rules, err := database.GetRoutingRules(ctx)
 	if err != nil {
 		logger.Error("load routing rules", "err", err)
-		os.Exit(1)
+	}
+	limits, err := database.GetRateLimits(ctx)
+	if err != nil {
+		logger.Error("load rate limits", "err", err)
 	}
 	instances := make(map[string]providers.Provider, len(provs))
 	for _, p := range provs {
@@ -308,8 +319,12 @@ func loadRouting(ctx context.Context, database *db.DB, secretDir string, logger 
 		}
 		instances[p.ID] = inst
 	}
-	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules))
-	return routing.Build(rules), instances
+	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules), "rateLimitDomains", len(limits))
+	return &routeState{
+		engine:    routing.Build(rules),
+		instances: instances,
+		limiter:   ratelimit.Build(limits),
+	}
 }
 
 // resolveCreds loads a provider's credentials from <secretDir>/<secretRef>, a

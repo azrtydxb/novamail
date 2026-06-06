@@ -58,6 +58,15 @@ type Account struct {
 	AllowedSenderDomains []string
 }
 
+// ConfigChanged is published by the Admin API after a successful config write
+// (mirrors api/config-changed.schema.json). Services reload the named slices.
+type ConfigChanged struct {
+	V         int      `json:"v"`
+	Epoch     int      `json:"epoch"`
+	Slices    []string `json:"slices"`
+	ChangedAt string   `json:"changedAt"`
+}
+
 // RateLimit caps delivery throughput for a recipient domain (row in the
 // rate_limits table). Domain "*" is the default for unmatched domains.
 type RateLimit struct {
