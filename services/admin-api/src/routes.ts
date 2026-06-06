@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "./db.js";
 import { publishConfigChanged } from "./bus.js";
 import { encrypt } from "./secrets.js";
+import { signToken } from "./auth.js";
 import crypto from "crypto";
 
 // Generic config resource: which table, which config.changed slice, the
@@ -163,6 +164,57 @@ export function registerRoutes(app: FastifyInstance): void {
     if (!rowCount) return reply.code(404).send({ error: "not found" });
     await publishConfigChanged(["providers", "dkim_keys"]);
     return reply.code(204).send();
+  });
+
+  // Operator authentication (GUI login → bearer token).
+  app.post("/api/auth/login", async (req, reply) => {
+    const b = req.body as { username?: string; password?: string };
+    if (!b.username || !b.password) return reply.code(400).send({ error: "username and password required" });
+    const { rows } = await pool.query(
+      "SELECT id, username, password_hash, role FROM operators WHERE username=$1 AND enabled = true",
+      [b.username],
+    );
+    if (rows.length === 0 || !(await bcrypt.compare(b.password, rows[0].password_hash))) {
+      return reply.code(401).send({ error: "invalid credentials" });
+    }
+    const token = signToken({ sub: rows[0].id, username: rows[0].username, role: rows[0].role });
+    return { token, username: rows[0].username, role: rows[0].role };
+  });
+  app.get("/api/auth/me", async (req, reply) => {
+    if (!req.operator) return reply.code(401).send({ error: "not authenticated" });
+    return { username: req.operator.username, role: req.operator.role };
+  });
+
+  // Operator management (admin users).
+  app.get("/api/operators", async () => {
+    const { rows } = await pool.query("SELECT id, username, role, enabled, created_at FROM operators ORDER BY username");
+    return rows;
+  });
+  app.post("/api/operators", async (req, reply) => {
+    const b = req.body as { username?: string; password?: string; role?: string };
+    if (!b.username || !b.password) return reply.code(400).send({ error: "username and password required" });
+    const hash = await bcrypt.hash(b.password, 10);
+    const { rows } = await pool.query(
+      "INSERT INTO operators (username, password_hash, role) VALUES ($1,$2,$3) RETURNING id, username, role, enabled",
+      [b.username, hash, b.role === "viewer" ? "viewer" : "admin"],
+    );
+    return reply.code(201).send(rows[0]);
+  });
+  app.delete("/api/operators/:id", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    const { rowCount } = await pool.query("DELETE FROM operators WHERE id=$1", [id]);
+    if (!rowCount) return reply.code(404).send({ error: "not found" });
+    return reply.code(204).send();
+  });
+
+  // Audit log (read-only).
+  app.get("/api/audit", async (req) => {
+    const limit = Math.min(Number((req.query as { limit?: string }).limit ?? 100), 500);
+    const { rows } = await pool.query(
+      "SELECT id, actor, action, target, at FROM audit_log ORDER BY at DESC LIMIT $1",
+      [limit],
+    );
+    return rows;
   });
 
   // DKIM key generation: mint an RSA keypair, store the private key
