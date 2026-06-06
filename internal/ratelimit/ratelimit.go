@@ -1,5 +1,7 @@
-// Package ratelimit enforces per-recipient-domain delivery rate limits using a
-// token bucket per domain (spec §6: "per-domain rate limits ... token budget").
+// Package ratelimit enforces token-bucket rate limits keyed by an arbitrary
+// string (recipient domain, provider, account, source IP, …). The "*" key is a
+// catch-all default. Used by both the inbound (ingress) and outbound (delivery)
+// paths.
 package ratelimit
 
 import (
@@ -7,43 +9,47 @@ import (
 	"time"
 
 	"golang.org/x/time/rate"
-
-	"github.com/azrtydxb/novamail/internal/model"
 )
 
-// Limiter holds one token bucket per configured domain, plus an optional "*"
-// default. Domains with no matching bucket are unlimited.
-type Limiter struct {
-	byDomain map[string]*rate.Limiter
-	def      *rate.Limiter
+// Spec is one configured limit: a key with a sustained per-second rate + burst.
+type Spec struct {
+	Key       string // "*" = default for unmatched keys
+	PerSecond float64
+	Burst     int
 }
 
-// Build constructs a Limiter from rate-limit config.
-func Build(limits []model.RateLimit) *Limiter {
-	l := &Limiter{byDomain: make(map[string]*rate.Limiter, len(limits))}
-	for _, rl := range limits {
-		lim := rate.NewLimiter(rate.Limit(rl.PerSecond), rl.Burst)
-		if rl.Domain == "*" {
+// Limiter holds one token bucket per key, plus an optional "*" default.
+type Limiter struct {
+	byKey map[string]*rate.Limiter
+	def   *rate.Limiter
+}
+
+// Build constructs a Limiter from specs.
+func Build(specs []Spec) *Limiter {
+	l := &Limiter{byKey: make(map[string]*rate.Limiter, len(specs))}
+	for _, s := range specs {
+		lim := rate.NewLimiter(rate.Limit(s.PerSecond), s.Burst)
+		if s.Key == "*" {
 			l.def = lim
 		} else {
-			l.byDomain[strings.ToLower(rl.Domain)] = lim
+			l.byKey[strings.ToLower(s.Key)] = lim
 		}
 	}
 	return l
 }
 
-func (l *Limiter) bucket(domain string) *rate.Limiter {
-	if b, ok := l.byDomain[strings.ToLower(domain)]; ok {
+func (l *Limiter) bucket(key string) *rate.Limiter {
+	if b, ok := l.byKey[strings.ToLower(key)]; ok {
 		return b
 	}
 	return l.def // may be nil (unlimited)
 }
 
-// Reserve attempts to consume one token for the domain now. It returns the delay
-// the caller must wait before sending, and ok=false if the domain is unlimited
-// (send immediately). If the caller cannot wait that long it must call Cancel.
-func (l *Limiter) Reserve(domain string) (delay time.Duration, res *rate.Reservation, ok bool) {
-	b := l.bucket(domain)
+// Reserve attempts to consume one token for key. Returns the delay the caller
+// must wait before proceeding, the reservation (Cancel it if not used), and
+// ok=false when the key is unlimited (proceed immediately).
+func (l *Limiter) Reserve(key string) (delay time.Duration, res *rate.Reservation, ok bool) {
+	b := l.bucket(key)
 	if b == nil {
 		return 0, nil, false
 	}
@@ -52,4 +58,4 @@ func (l *Limiter) Reserve(domain string) (delay time.Duration, res *rate.Reserva
 }
 
 // Empty reports whether any limits are configured.
-func (l *Limiter) Empty() bool { return len(l.byDomain) == 0 && l.def == nil }
+func (l *Limiter) Empty() bool { return len(l.byKey) == 0 && l.def == nil }

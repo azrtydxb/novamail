@@ -67,12 +67,33 @@ type ConfigChanged struct {
 	ChangedAt string   `json:"changedAt"`
 }
 
-// RateLimit caps delivery throughput for a recipient domain (row in the
-// rate_limits table). Domain "*" is the default for unmatched domains.
+// RateLimit is a token-bucket limit row (rate_limits). Direction is "in"
+// (enforced in ingress) or "out" (delivery). Scope is account | ip |
+// recipient_domain | provider | global; ScopeValue is the key ("*" = global).
 type RateLimit struct {
-	Domain    string
-	PerSecond float64
-	Burst     int
+	ID         string
+	Direction  string
+	Scope      string
+	ScopeValue string
+	PerSecond  float64
+	Burst      int
+}
+
+// MessageMeta is parsed-header metadata captured by ingress at submission.
+type MessageMeta struct {
+	Subject   string
+	MessageID string
+	SizeBytes int64
+}
+
+// RelayClient is a trusted source range (relay_clients) that may relay WITHOUT
+// SMTP AUTH, restricted to AllowedSenderDomains (empty = any).
+type RelayClient struct {
+	ID                   string
+	CIDR                 string
+	Description          string
+	AllowedSenderDomains []string
+	Enabled              bool
 }
 
 // Provider is an upstream relay target (row in the providers table).

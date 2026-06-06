@@ -11,6 +11,7 @@ export const PROVIDER_TYPE_LABEL = {
 const AUTH_TO_DB = { 'XOAUTH2': 'xoauth2', 'AWS-SIGV4': 'iam', 'PLAIN': 'smtp-auth', 'LOGIN': 'smtp-auth', 'NONE': 'ip' };
 const AUTH_FROM_DB = { xoauth2: 'XOAUTH2', iam: 'AWS-SIGV4', 'smtp-auth': 'PLAIN', ip: 'NONE' };
 const z24 = () => Array.from({ length: 24 }, () => 0);
+const fmtSize = (n) => (n == null ? '—' : n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : `${(n / 1048576).toFixed(1)} MB`);
 const star = (v) => (v == null || v === '' ? '*' : v);
 const unstar = (v) => (v === '*' || v === '' ? null : v);
 
@@ -52,7 +53,9 @@ function mapDomain(d, dk) {
   };
 }
 function mapRate(r) {
-  return { domain: r.domain, per_second: r.per_second, burst: r.burst, enabled: r.enabled, usage: 0, note: r.domain === '*' ? 'default' : undefined };
+  // 'domain' kept for the current rate-limits screen (= scope_value); the
+  // direction/scope split surfaces in the restructured GUI.
+  return { id: r.id, domain: r.scope_value, direction: r.direction, scope: r.scope, per_second: r.per_second, burst: r.burst, enabled: r.enabled, usage: 0, note: r.scope_value === '*' ? 'default' : undefined };
 }
 function mapAccount(a) {
   return { id: a.id, username: a.username, allowed_sender_domains: a.allowed_sender_domains || [], enabled: a.enabled !== false, lastAuth: '—', sent24h: 0 };
@@ -68,7 +71,7 @@ async function loadMessages() {
     return {
       id: m.id, mail_from: m.mail_from || '<>', rcpt_to: m.rcpt_to || [], subject: m.subject || '—',
       status: m.status, attempts: m.attempts, provider: lastProv ? lastProv.provider : '—',
-      size: '—', created_at: m.created_at,
+      size: fmtSize(m.size_bytes), created_at: m.created_at,
       events: events.map((e) => ({ kind: e.kind, provider: e.provider, detail: e.detail || '', at: e.at })),
     };
   }));
@@ -116,8 +119,8 @@ async function save(coll, f, item) {
   } else if (coll === 'domains') {
     if (!item) await api('/relay-domains', { method: 'POST', body: { domain: f.domain, enabled: !!f.verified || true } });
   } else if (coll === 'ratelimits') {
-    const body = { domain: f.domain, per_second: Number(f.per_second), burst: Number(f.burst), enabled: !!f.enabled };
-    item ? await api(`/rate-limits/${encodeURIComponent(item.domain)}`, { method: 'PUT', body }) : await api('/rate-limits', { method: 'POST', body });
+    const body = { direction: f.direction || 'out', scope: f.scope || 'recipient_domain', scope_value: f.domain, per_second: Number(f.per_second), burst: Number(f.burst), enabled: !!f.enabled };
+    item ? await api(`/rate-limits/${item.id}`, { method: 'PUT', body }) : await api('/rate-limits', { method: 'POST', body });
   } else if (coll === 'accounts') {
     if (!item) await api('/accounts', { method: 'POST', body: { username: f.username, password: f.password, allowed_sender_domains: f.allowed_sender_domains } });
     else await api(`/accounts/${item.id}`, { method: 'PUT', body: { allowed_sender_domains: f.allowed_sender_domains, enabled: !!f.enabled, ...(f.password ? { password: f.password } : {}) } });
@@ -127,7 +130,7 @@ async function save(coll, f, item) {
 
 async function remove(coll, item) {
   const path = { providers: 'providers', rules: 'routing-rules', domains: 'relay-domains', ratelimits: 'rate-limits', accounts: 'accounts' }[coll];
-  const id = coll === 'domains' || coll === 'ratelimits' ? encodeURIComponent(item.domain) : (item.id || encodeURIComponent(item.domain));
+  const id = coll === 'domains' ? encodeURIComponent(item.domain) : (item.id || encodeURIComponent(item.domain));
   await api(`/${path}/${id}`, { method: 'DELETE' });
   await loadAll();
 }
@@ -136,7 +139,7 @@ async function toggle(coll, item) {
   try {
     if (coll === 'providers') await api(`/providers/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
     else if (coll === 'rules') await api(`/routing-rules/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
-    else if (coll === 'ratelimits') await api(`/rate-limits/${encodeURIComponent(item.domain)}`, { method: 'PUT', body: { enabled: !item.enabled } });
+    else if (coll === 'ratelimits') await api(`/rate-limits/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
     else if (coll === 'domains') await api(`/relay-domains/${encodeURIComponent(item.domain)}`, { method: 'PUT', body: { enabled: !item.enabled } });
     else if (coll === 'accounts') await api(`/accounts/${item.id}`, { method: 'PUT', body: { enabled: !item.enabled } });
   } catch (e) {
@@ -168,7 +171,7 @@ async function refreshLight() {
       NM_DATA.MESSAGES = list.map((m) => ({
         id: m.id, mail_from: m.mail_from || '<>', rcpt_to: m.rcpt_to || [], subject: m.subject || '—',
         status: m.status, attempts: m.attempts, provider: byId[m.id] ? byId[m.id].provider : '—',
-        size: '—', created_at: m.created_at, events: byId[m.id] ? byId[m.id].events : [],
+        size: fmtSize(m.size_bytes), created_at: m.created_at, events: byId[m.id] ? byId[m.id].events : [],
       }));
     }
     bump();
