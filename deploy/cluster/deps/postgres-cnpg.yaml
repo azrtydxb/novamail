@@ -1,0 +1,33 @@
+# HA PostgreSQL via the CloudNativePG operator: 1 primary + 2 replicas with
+# quorum synchronous replication (each commit waits for >=1 replica → zero data
+# loss on a single-node failure) and automatic failover. Apps connect to the
+# novamail-pg-rw service, which always points at the current primary.
+apiVersion: postgresql.cnpg.io/v1
+kind: Cluster
+metadata:
+  name: novamail-pg
+  namespace: novamail
+spec:
+  instances: 3
+  imageName: ghcr.io/cloudnative-pg/postgresql:16
+  primaryUpdateStrategy: unsupervised
+  enableSuperuserAccess: true
+  storage:
+    size: 10Gi
+    storageClass: longhorn
+  postgresql:
+    synchronous:
+      method: any
+      number: 1
+  bootstrap:
+    initdb:
+      database: novamail
+      owner: novamail
+      secret:
+        name: novamail-pg-app
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }
+  affinity:
+    enablePodAntiAffinity: true
+    topologyKey: kubernetes.io/hostname
