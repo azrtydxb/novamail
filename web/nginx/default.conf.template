@@ -6,9 +6,16 @@ server {
     server_name _;
     root /usr/share/nginx/html;
 
-    # Proxy API calls to the admin-api. Operators authenticate via /api/auth/login
-    # and the GUI sends its own bearer token, so nginx no longer injects the API
-    # key (that key remains for machine/automation clients).
+    # Security headers (clickjacking, MIME-sniffing, referrer leakage). CSP is
+    # intentionally omitted here — the GUI uses inline styles + Google Fonts, so a
+    # CSP must be authored and tested carefully before enabling.
+    add_header X-Frame-Options "DENY" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+
+    # Proxy API calls to the admin-api. Operators authenticate via a session
+    # cookie (better-auth) which the browser sends automatically; nginx no longer
+    # injects the API key (that key remains for machine/automation clients).
     location /api/ {
         proxy_pass ${ADMIN_API_URL};
         proxy_set_header Host $host;
