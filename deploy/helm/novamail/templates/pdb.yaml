@@ -1,0 +1,25 @@
+{{- /* PodDisruptionBudgets for HA: one per component that runs >1 replica. */ -}}
+{{- $ctx := . -}}
+{{- $comps := list
+      (dict "name" "ingress"   "labels" (include "novamail.ingress.selectorLabels" .)  "replicas" .Values.ingressApp.replicas)
+      (dict "name" "delivery"  "labels" (include "novamail.delivery.selectorLabels" .) "replicas" .Values.delivery.replicas)
+      (dict "name" "dsn"       "labels" (include "novamail.dsn.selectorLabels" .)      "replicas" .Values.dsn.replicas)
+      (dict "name" "admin-api" "labels" (include "novamail.admin.selectorLabels" .)    "replicas" .Values.adminApi.replicas)
+      (dict "name" "web"       "labels" (include "novamail.web.selectorLabels" .)      "replicas" .Values.web.replicas)
+-}}
+{{- range $comps }}
+{{- if gt (int .replicas) 1 }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "novamail.fullname" $ctx }}-{{ .name }}
+  labels:
+    {{- include "novamail.labels" $ctx | nindent 4 }}
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      {{- .labels | nindent 6 }}
+{{- end }}
+{{- end }}

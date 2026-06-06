@@ -1,0 +1,23 @@
+[Unit]
+Description=novamail ingress (SMTP submission)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=novamail
+Group=novamail
+EnvironmentFile=/etc/novamail/novamail.env
+ExecStart=/usr/local/bin/novamail-ingress
+Restart=on-failure
+RestartSec=2
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/novamail
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target

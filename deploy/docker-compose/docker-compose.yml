@@ -1,0 +1,103 @@
+# Single-host novamail (spec §5): the same services that run on Kubernetes,
+# wired for a one-box deployment. Postgres + RabbitMQ + the three Go data-plane
+# services + the Admin API + GUI + a Mailpit test sink. Bodies live on a shared
+# named volume (the filesystem body store; no object store).
+#
+#   docker compose up --build
+#
+# Then submit to localhost:2525 (plaintext, dev) and watch http://localhost:8025
+# (Mailpit) and http://localhost:8088 (GUI).
+name: novamail
+
+x-data-env: &data-env
+  DSN: postgres://novamail:novamail@postgres:5432/novamail?sslmode=disable
+  AMQP_URL: amqp://novamail:novamail@rabbitmq:5672/
+  NOVAMAIL_BODY_STORE: /var/lib/novamail/bodies
+
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: novamail
+      POSTGRES_PASSWORD: novamail
+      POSTGRES_DB: novamail
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ../../migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "novamail"]
+      interval: 5s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    environment:
+      RABBITMQ_DEFAULT_USER: novamail
+      RABBITMQ_DEFAULT_PASS: novamail
+    ports:
+      - "15672:15672"
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.21
+    ports:
+      - "8025:8025"
+
+  ingress:
+    build: { context: ../.., args: { SERVICE: ingress } }
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      <<: *data-env
+      NOVAMAIL_SMTP_ADDR: ":2525"
+      NOVAMAIL_INSECURE_AUTH: "true"   # dev only; enable TLS for real submission
+    ports:
+      - "2525:2525"
+    volumes:
+      - bodies:/var/lib/novamail/bodies
+
+  delivery:
+    build: { context: ../.., args: { SERVICE: delivery } }
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment: *data-env
+    volumes:
+      - bodies:/var/lib/novamail/bodies
+
+  dsn:
+    build: { context: ../.., args: { SERVICE: dsn } }
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment: *data-env
+    volumes:
+      - bodies:/var/lib/novamail/bodies
+
+  admin-api:
+    build: { context: ../../services/admin-api }
+    depends_on:
+      postgres: { condition: service_healthy }
+      rabbitmq: { condition: service_healthy }
+    environment:
+      <<: *data-env
+      NOVAMAIL_ADMIN_API_KEY: devkey
+    ports:
+      - "3000:3000"
+
+  web:
+    build: { context: ../../web }
+    depends_on: [admin-api]
+    environment:
+      ADMIN_API_URL: http://admin-api:3000
+      ADMIN_API_KEY: devkey
+    ports:
+      - "8088:8080"
+
+volumes:
+  pgdata:
+  bodies:

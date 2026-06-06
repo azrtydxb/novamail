@@ -80,14 +80,15 @@ jobs:
             insecure = true
           EOF
           docker buildx create --name nm --driver docker-container \
-            --platform linux/arm64 --buildkitd-config /tmp/buildkitd.toml --use
+            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      - name: Build & push ${{ matrix.service }} (arm64 → zot)
+      - name: Build & push ${{ matrix.service }} (multi-arch → zot)
         uses: docker/build-push-action@v6
         with:
           context: .
           builder: nm
-          platforms: linux/arm64
+          # The Go Dockerfile cross-compiles (no QEMU); the runtime stage only COPYs.
+          platforms: linux/arm64,linux/amd64
           build-args: SERVICE=${{ matrix.service }}
           push: true
           tags: |
