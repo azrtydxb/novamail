@@ -3,6 +3,7 @@ import bcrypt from "bcryptjs";
 import { pool } from "./db.js";
 import { publishConfigChanged } from "./bus.js";
 import { encrypt } from "./secrets.js";
+import crypto from "crypto";
 
 // Generic config resource: which table, which config.changed slice, the
 // writable columns, and the primary key. The Admin API validates that only
@@ -162,6 +163,41 @@ export function registerRoutes(app: FastifyInstance): void {
     if (!rowCount) return reply.code(404).send({ error: "not found" });
     await publishConfigChanged(["providers", "dkim_keys"]);
     return reply.code(204).send();
+  });
+
+  // DKIM key generation: mint an RSA keypair, store the private key
+  // envelope-encrypted in the secret store, persist the public key + selector,
+  // and return the DNS TXT record to publish. Generating a new active selector
+  // retires the previous active one for that domain (rotation).
+  app.post("/api/dkim-keys/generate", async (req, reply) => {
+    const b = req.body as { domain?: string; selector?: string };
+    if (!b.domain || !b.selector) return reply.code(400).send({ error: "domain and selector required" });
+    const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: "spki", format: "pem" },
+      privateKeyEncoding: { type: "pkcs8", format: "pem" },
+    });
+    const ref = `dkim/${b.domain}/${b.selector}`;
+    const der = crypto.createPublicKey(publicKey).export({ type: "spki", format: "der" }).toString("base64");
+    const txt = `v=DKIM1; k=rsa; p=${der}`;
+    await pool.query(
+      `INSERT INTO secrets (ref, envelope, updated_at) VALUES ($1,$2,now())
+       ON CONFLICT (ref) DO UPDATE SET envelope=EXCLUDED.envelope, updated_at=now()`,
+      [ref, encrypt(privateKey)],
+    );
+    await pool.query("UPDATE dkim_keys SET rotation='retiring' WHERE domain=$1 AND rotation='active'", [b.domain]);
+    await pool.query(
+      `INSERT INTO dkim_keys (domain, selector, private_ref, public_key, rotation)
+       VALUES ($1,$2,$3,$4,'active')
+       ON CONFLICT (domain, selector) DO UPDATE SET private_ref=EXCLUDED.private_ref, public_key=EXCLUDED.public_key, rotation='active'`,
+      [b.domain, b.selector, ref, der],
+    );
+    await publishConfigChanged(["dkim_keys"]);
+    return reply.code(201).send({
+      domain: b.domain,
+      selector: b.selector,
+      dns: { name: `${b.selector}._domainkey.${b.domain}`, type: "TXT", value: txt },
+    });
   });
 
   // Suppression list (recipients we stop sending to).

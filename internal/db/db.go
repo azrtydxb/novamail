@@ -100,6 +100,26 @@ func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
 	return out, rows.Err()
 }
 
+// GetActiveDKIMKeys loads active DKIM signing keys (one active selector/domain).
+func (d *DB) GetActiveDKIMKeys(ctx context.Context) ([]model.DKIMKey, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT domain, selector, coalesce(private_ref,''), rotation
+		   FROM dkim_keys WHERE rotation = 'active'`)
+	if err != nil {
+		return nil, fmt.Errorf("query dkim keys: %w", err)
+	}
+	defer rows.Close()
+	var out []model.DKIMKey
+	for rows.Next() {
+		var k model.DKIMKey
+		if err := rows.Scan(&k.Domain, &k.Selector, &k.PrivateRef, &k.Rotation); err != nil {
+			return nil, err
+		}
+		out = append(out, k)
+	}
+	return out, rows.Err()
+}
+
 // GetSuppressions loads the active suppression addresses (lowercased).
 func (d *DB) GetSuppressions(ctx context.Context) ([]string, error) {
 	rows, err := d.pool.Query(ctx,
