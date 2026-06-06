@@ -447,6 +447,54 @@ function ConfirmDelete({ coll, item, onClose }) {
   );
 }
 
+/* ---- Profile (read-only) ---- */
+function ProfileModal({ onClose }) {
+  const op = window.NM_DATA.OPERATOR || {};
+  const Row = ({ label, value }) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '11px 0', borderBottom: '1px solid var(--line)' }}>
+      <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)' }}>{label}</span>
+      <span className="mono" style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>{value || '—'}</span>
+    </div>
+  );
+  return (
+    <ModalShell eyebrow="account" title="Profile" icon={<I.Users size={17} />} onClose={onClose} width={420}
+      footer={<><Btn onClick={onClose}>close</Btn><Btn kind="primary" icon={<I.Lock size={13} />} onClick={() => { onClose(); window.nmModal({ kind: 'password' }); }}>change password</Btn></>}>
+      <div style={{ display: 'flex', flexDirection: 'column' }}>
+        <Row label="operator" value={op.username} />
+        <Row label="role" value={op.role} />
+        <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-4)', marginTop: 12, lineHeight: 1.5 }}>Management-plane login (distinct from SMTP submission accounts). Every config change you make is recorded in the audit log under this name.</div>
+      </div>
+    </ModalShell>
+  );
+}
+
+/* ---- Change password ---- */
+function ChangePasswordModal({ onClose }) {
+  const [f, setF] = useMState({ current: '', next: '', confirm: '' });
+  const [tried, setTried] = useMState(false);
+  const [busy, setBusy] = useMState(false);
+  const up = (k, v) => setF(s => ({ ...s, [k]: v }));
+  const invalid = { current: !f.current, next: f.next.length < 6, confirm: f.confirm !== f.next };
+  const save = async () => {
+    setTried(true);
+    if (invalid.current || invalid.next || invalid.confirm) return;
+    setBusy(true);
+    try { await window.Store.changePassword(f.current, f.next); window.nmToast('Password changed'); onClose(); }
+    catch (e) { window.nmToast(String(e.message || e).replace(/^\d+\s*/, ''), 'danger'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <ModalShell eyebrow="account" title="Change password" icon={<I.Lock size={17} />} onClose={onClose} width={420}
+      footer={<><Btn onClick={onClose}>cancel</Btn><Btn kind="primary" icon={<I.Check size={13} />} onClick={save}>{busy ? 'saving…' : 'update password'}</Btn></>}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <FRow label="current password" error={tried && invalid.current ? 'required' : null}><FText type="password" value={f.current} onChange={v => up('current', v)} placeholder="••••••••••••" invalid={tried && invalid.current} /></FRow>
+        <FRow label="new password" hint="min 6 characters" error={tried && invalid.next ? 'too short' : null}><FText type="password" value={f.next} onChange={v => up('next', v)} placeholder="••••••••••••" invalid={tried && invalid.next} /></FRow>
+        <FRow label="confirm new password" error={tried && invalid.confirm ? 'does not match' : null}><FText type="password" value={f.confirm} onChange={v => up('confirm', v)} placeholder="••••••••••••" invalid={tried && invalid.confirm} /></FRow>
+      </div>
+    </ModalShell>
+  );
+}
+
 /* ===== modal host ===== */
 const FORMS = { providers: ProviderForm, rules: RuleForm, domains: DomainForm, ratelimits: RateLimitForm, accounts: AccountForm, relayclients: RelayClientForm, suppressions: SuppressionForm, operators: OperatorForm };
 function ModalHost() {
@@ -459,6 +507,8 @@ function ModalHost() {
   const close = () => setModal(null);
   if (modal.kind === 'confirm') return <ConfirmDelete coll={modal.coll} item={modal.item} onClose={close} />;
   if (modal.kind === 'dkimgen') return <DKIMGen onClose={close} />;
+  if (modal.kind === 'profile') return <ProfileModal onClose={close} />;
+  if (modal.kind === 'password') return <ChangePasswordModal onClose={close} />;
   const Form = FORMS[modal.coll];
   return Form ? <Form item={modal.item} preset={modal.preset} onClose={close} /> : null;
 }

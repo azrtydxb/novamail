@@ -23,7 +23,7 @@ const NM_DATA = {
   METRICS: { relayed24h: 0, deferred24h: 0, bounced24h: 0, acceptRate: 100, queueDepth: 0, p50Latency: 0, p95Latency: 0, dkimSigned: 100 },
   PROVIDERS: [], ROUTING_RULES: [], RELAY_DOMAINS: [], RATE_LIMITS: [], ACCOUNTS: [],
   MESSAGES: [], QUEUES: [], PROVIDER_TYPE_LABEL,
-  RELAY_CLIENTS: [], SUPPRESSIONS: [], AUDIT: [], OPERATORS: [], DKIM_KEYS: [], SETTINGS: {},
+  RELAY_CLIENTS: [], SUPPRESSIONS: [], AUDIT: [], OPERATORS: [], DKIM_KEYS: [], SETTINGS: {}, OPERATOR: null,
 };
 window.NM_DATA = NM_DATA;
 
@@ -97,6 +97,8 @@ async function loadAll() {
     api('/operators').catch(() => []),
     api('/settings').catch(() => []),
   ]);
+
+  try { NM_DATA.OPERATOR = await api('/auth/me'); } catch { /* not an operator session */ }
 
   let metrics = null, queues = [];
   try { metrics = await api('/metrics'); } catch { /* telemetry optional */ }
@@ -213,6 +215,7 @@ async function login(username, password) {
   return res;
 }
 function logout() { setToken(null); NM_DATA.OPERATOR = null; }
+async function changePassword(current, next) { return api('/auth/password', { method: 'POST', body: { current_password: current, new_password: next } }); }
 
 // ---- one-off actions ----
 async function generateDKIM(domain, selector) {
@@ -224,5 +227,5 @@ async function purgeQueue(name) { await api(`/queues/${encodeURIComponent(name)}
 async function requeueMessage(id) { await api(`/messages/${id}/requeue`, { method: 'POST' }); await refreshLight(); }
 async function saveSetting(key, value) { await api(`/settings/${encodeURIComponent(key)}`, { method: 'PUT', body: { value } }); await loadAll(); }
 
-window.Store = { loadAll, refreshLight, save, remove, toggle, login, logout, generateDKIM, purgeQueue, requeueMessage, saveSetting, hasToken };
+window.Store = { loadAll, refreshLight, save, remove, toggle, login, logout, changePassword, generateDKIM, purgeQueue, requeueMessage, saveSetting, hasToken };
 export const Store = window.Store;
