@@ -93,7 +93,10 @@ export async function getMetrics() {
   return {
     metrics: {
       relayed24h: relayed, deferred24h: deferred, bounced24h: bounced,
-      acceptRate: Math.round(acceptRate * 100) / 100, queueDepth, p50Latency: 0, p95Latency: 0, dkimSigned: 100,
+      // NOTE: send latency is exported as a Prometheus histogram
+      // (novamail_delivery_send_seconds) for Grafana; we don't fabricate p50/p95
+      // here. dkimSigned reflects that all outbound mail is DKIM-signed.
+      acceptRate: Math.round(acceptRate * 100) / 100, queueDepth, dkimSigned: 100,
     },
     series: S,
     providerVolume,
