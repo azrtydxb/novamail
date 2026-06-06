@@ -5,14 +5,17 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -26,6 +29,7 @@ import (
 	"github.com/azrtydxb/novamail/internal/dkim"
 	"github.com/azrtydxb/novamail/internal/model"
 	"github.com/azrtydxb/novamail/internal/providers"
+	"github.com/azrtydxb/novamail/internal/routing"
 	"github.com/azrtydxb/novamail/internal/store"
 )
 
@@ -67,17 +71,11 @@ func main() {
 	}
 	defer func() { _ = bus.Close() }()
 
-	// M1: a single generic SMTP smarthost from env. M3 reads providers/routing
-	// from Postgres.
-	provider := providers.NewSMTP(providers.SMTPConfig{
-		Name:     env("NOVAMAIL_SMARTHOST_NAME", "smarthost"),
-		Addr:     os.Getenv("NOVAMAIL_SMARTHOST_ADDR"),
-		TLSMode:  env("NOVAMAIL_SMARTHOST_TLS", "none"),
-		Username: os.Getenv("NOVAMAIL_SMARTHOST_USER"),
-		Password: os.Getenv("NOVAMAIL_SMARTHOST_PASS"),
-		HELO:     env("NOVAMAIL_HELO", "novamail.local"),
-		Insecure: env("NOVAMAIL_SMARTHOST_INSECURE", "false") == "true",
-	})
+	// Routing is DB-driven: providers and routing rules come from Postgres (the
+	// single source of truth). secretDir resolves credentials referenced by a
+	// provider's secret_ref. (M4 hot-reloads this on config.changed.)
+	secretDir := env("NOVAMAIL_PROVIDER_SECRETS", "/etc/novamail/provider-secrets")
+	engine, instances := loadRouting(initCtx, database, secretDir, logger)
 
 	signer, err := dkim.Load(
 		os.Getenv("NOVAMAIL_DKIM_DOMAIN"),
@@ -92,7 +90,11 @@ func main() {
 		logger.Info("dkim signing enabled", "domain", signer.Domain())
 	}
 
-	w := &worker{store: bodies, db: database, bus: bus, provider: provider, signer: signer, log: logger}
+	w := &worker{
+		store: bodies, db: database, bus: bus,
+		engine: engine, instances: instances,
+		signer: signer, log: logger,
+	}
 
 	// Health/metrics server.
 	go serveHealth(env("NOVAMAIL_HTTP_ADDR", ":8080"), database, bus, logger)
@@ -126,12 +128,26 @@ func main() {
 }
 
 type worker struct {
-	store    *store.FSStore
-	db       *db.DB
-	bus      *amqp.Conn
-	provider providers.Provider
-	signer   *dkim.Signer
-	log      *slog.Logger
+	store     *store.FSStore
+	db        *db.DB
+	bus       *amqp.Conn
+	engine    *routing.Engine
+	instances map[string]providers.Provider // provider id → instance
+	signer    *dkim.Signer
+	log       *slog.Logger
+}
+
+// chain returns the ordered providers to try for a job, resolved from the DB
+// routing rules. An empty result means "no route" (the message is deferred).
+func (w *worker) chain(job *model.RelayJob) []providers.Provider {
+	ids := w.engine.Resolve(job.RoutingHints.RecipientDomain, job.RoutingHints.SenderDomain)
+	out := make([]providers.Provider, 0, len(ids))
+	for _, id := range ids {
+		if p, ok := w.instances[id]; ok {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
@@ -146,63 +162,136 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 	hctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 
-	body, err := w.store.Get(hctx, job.BodyRef.Key)
+	// Read the body once (DKIM-signed if applicable) into memory so it can be
+	// replayed across providers in a failover chain.
+	raw, err := w.materialize(hctx, &job)
 	if err != nil {
-		w.log.Error("fetch body", "err", err, "id", job.MessageID)
-		_ = d.Nack(false, true) // requeue; body may appear (eventual consistency)
+		w.log.Error("materialize body", "err", err, "id", job.MessageID)
+		_ = d.Nack(false, true)
 		return
+	}
+
+	chain := w.chain(&job)
+	if len(chain) == 0 {
+		// No route configured (yet): defer so it retries when config arrives.
+		w.defer_(hctx, d, &job, "no matching routing rule")
+		return
+	}
+
+	// Try the chain in order. A Delivered ends it; a Defer or Fail advances to
+	// the next provider. After exhausting the chain we fall back to the retry
+	// tiers (if any provider was transient) or the DLQ (all permanent).
+	sawDefer := false
+	var lastProvider, lastDetail string
+	for _, p := range chain {
+		res, _ := p.Send(hctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
+		lastProvider, lastDetail = p.Name(), res.Detail
+		if res.Outcome == providers.Delivered {
+			relayed.Inc()
+			_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusRelayed, "relayed", p.Name(), res.Detail)
+			_ = d.Ack(false)
+			w.log.Info("relayed", "id", job.MessageID, "provider", p.Name())
+			return
+		}
+		if res.Outcome == providers.Defer {
+			sawDefer = true
+		}
+		w.log.Warn("provider failed over", "id", job.MessageID, "provider", p.Name(), "outcome", res.Outcome.String())
+	}
+
+	if sawDefer {
+		w.defer_(hctx, d, &job, fmt.Sprintf("%s: %s", lastProvider, lastDetail))
+		return
+	}
+	// Whole chain permanently failed.
+	failed.Inc()
+	_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusFailed, "failed", lastProvider, lastDetail)
+	w.toDLQ(hctx, d, &job)
+	w.log.Warn("chain failed", "id", job.MessageID, "detail", lastDetail)
+}
+
+// materialize fetches the body and applies DKIM signing, returning the bytes to
+// relay (buffered so failover can replay them).
+func (w *worker) materialize(ctx context.Context, job *model.RelayJob) ([]byte, error) {
+	body, err := w.store.Get(ctx, job.BodyRef.Key)
+	if err != nil {
+		return nil, err
 	}
 	defer func() { _ = body.Close() }()
 
-	// DKIM-sign when the signer's domain matches the sending domain.
-	var msgBody io.Reader = body
+	var src io.Reader = body
 	if w.signer != nil && w.signer.Domain() == job.RoutingHints.SenderDomain {
 		signed, serr := w.signer.Sign(body)
 		if serr != nil {
-			w.log.Error("dkim sign", "err", serr, "id", job.MessageID)
+			return nil, serr
+		}
+		src = signed
+	}
+	return io.ReadAll(src)
+}
+
+// defer_ records a deferral and escalates the job through the retry tiers, or
+// dead-letters it once the tiers are exhausted.
+func (w *worker) defer_(ctx context.Context, d amqp091.Delivery, job *model.RelayJob, detail string) {
+	deferred.Inc()
+	_ = w.db.RecordAttempt(ctx, job.MessageID, model.StatusDeferred, "deferred", "", detail)
+	job.Attempt++
+	if tier, ok := amqp.TierForAttempt(job.Attempt); ok {
+		if err := w.bus.Requeue(ctx, tier, job); err != nil {
+			w.log.Error("requeue", "err", err, "id", job.MessageID)
 			_ = d.Nack(false, true)
 			return
 		}
-		msgBody = signed
-	}
-
-	res, sendErr := w.provider.Send(hctx, &providers.Message{
-		Envelope: job.Envelope,
-		Body:     msgBody,
-	})
-
-	switch res.Outcome {
-	case providers.Delivered:
-		relayed.Inc()
-		_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusRelayed, "relayed", w.provider.Name(), res.Detail)
 		_ = d.Ack(false)
-		w.log.Info("relayed", "id", job.MessageID, "provider", w.provider.Name())
-
-	case providers.Fail:
-		// Permanent (5xx): straight to the DLQ for a bounce.
-		failed.Inc()
-		_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusFailed, "failed", w.provider.Name(), res.Detail)
-		w.toDLQ(hctx, d, &job)
-		w.log.Warn("failed", "id", job.MessageID, "detail", res.Detail)
-
-	default: // Defer (transient 4xx / network): escalate through the wait tiers.
-		deferred.Inc()
-		_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusDeferred, "deferred", w.provider.Name(), res.Detail)
-		job.Attempt++
-		if tier, ok := amqp.TierForAttempt(job.Attempt); ok {
-			if err := w.bus.Requeue(hctx, tier, &job); err != nil {
-				w.log.Error("requeue", "err", err, "id", job.MessageID)
-				_ = d.Nack(false, true) // keep it; try again
-				return
-			}
-			_ = d.Ack(false)
-			w.log.Warn("deferred", "id", job.MessageID, "tier", tier.Queue, "attempt", job.Attempt, "err", sendErr)
-		} else {
-			// Retries exhausted → permanent failure.
-			w.toDLQ(hctx, d, &job)
-			w.log.Warn("retries exhausted", "id", job.MessageID)
-		}
+		w.log.Warn("deferred", "id", job.MessageID, "tier", tier.Queue, "attempt", job.Attempt, "detail", detail)
+		return
 	}
+	w.toDLQ(ctx, d, job)
+	w.log.Warn("retries exhausted", "id", job.MessageID)
+}
+
+// loadRouting reads providers + routing rules from Postgres and builds the
+// routing engine plus a provider-instance map. Credentials are resolved from
+// the secret directory by each provider's secret_ref.
+func loadRouting(ctx context.Context, database *db.DB, secretDir string, logger *slog.Logger) (*routing.Engine, map[string]providers.Provider) {
+	provs, err := database.GetProviders(ctx)
+	if err != nil {
+		logger.Error("load providers", "err", err)
+		os.Exit(1)
+	}
+	rules, err := database.GetRoutingRules(ctx)
+	if err != nil {
+		logger.Error("load routing rules", "err", err)
+		os.Exit(1)
+	}
+	instances := make(map[string]providers.Provider, len(provs))
+	for _, p := range provs {
+		inst, err := providers.New(p, resolveCreds(secretDir, p.SecretRef))
+		if err != nil {
+			logger.Error("build provider", "err", err, "provider", p.Name)
+			continue
+		}
+		instances[p.ID] = inst
+	}
+	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules))
+	return routing.Build(rules), instances
+}
+
+// resolveCreds loads a provider's credentials from <secretDir>/<secretRef>, a
+// JSON file holding the secret bytes. The DB holds only the reference; the
+// secret store holds the material (never plaintext in Postgres). Missing/empty
+// ref → no credentials (e.g. IP-authed or in-cluster test sinks).
+func resolveCreds(secretDir, secretRef string) providers.Creds {
+	if secretRef == "" {
+		return providers.Creds{}
+	}
+	b, err := os.ReadFile(filepath.Join(secretDir, secretRef))
+	if err != nil {
+		return providers.Creds{}
+	}
+	var c providers.Creds
+	_ = json.Unmarshal(b, &c)
+	return c
 }
 
 // toDLQ moves a job to the DLQ and acks the original delivery.

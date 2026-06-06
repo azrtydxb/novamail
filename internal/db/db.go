@@ -58,6 +58,50 @@ func (d *DB) Authenticate(ctx context.Context, username, password string) (*mode
 	return &acc, nil
 }
 
+// GetProviders loads all enabled providers.
+func (d *DB) GetProviders(ctx context.Context) ([]model.Provider, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT id::text, name, type, coalesce(endpoint,''), coalesce(auth_mode,''), enabled, coalesce(secret_ref,'')
+		   FROM providers WHERE enabled = true`)
+	if err != nil {
+		return nil, fmt.Errorf("query providers: %w", err)
+	}
+	defer rows.Close()
+	var out []model.Provider
+	for rows.Next() {
+		var p model.Provider
+		if err := rows.Scan(&p.ID, &p.Name, &p.Type, &p.Endpoint, &p.AuthMode, &p.Enabled, &p.SecretRef); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// GetRoutingRules loads all enabled rules, highest priority first.
+func (d *DB) GetRoutingRules(ctx context.Context) ([]model.RoutingRule, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT id::text, coalesce(recipient_domain,''), coalesce(sender_domain,''),
+		        provider_chain::text[], priority, enabled
+		   FROM routing_rules WHERE enabled = true
+		  ORDER BY priority DESC, id`)
+	if err != nil {
+		return nil, fmt.Errorf("query routing rules: %w", err)
+	}
+	defer rows.Close()
+	var out []model.RoutingRule
+	for rows.Next() {
+		var r model.RoutingRule
+		var chain []string
+		if err := rows.Scan(&r.ID, &r.RecipientDomain, &r.SenderDomain, &chain, &r.Priority, &r.Enabled); err != nil {
+			return nil, err
+		}
+		r.ProviderChain = chain
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // LastDetail returns the most recent event detail for a message (used by the
 // DSN generator to quote the upstream diagnostic). Empty string if none.
 func (d *DB) LastDetail(ctx context.Context, id string) (string, error) {

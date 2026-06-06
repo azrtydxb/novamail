@@ -58,6 +58,29 @@ type Account struct {
 	AllowedSenderDomains []string
 }
 
+// Provider is an upstream relay target (row in the providers table).
+type Provider struct {
+	ID        string
+	Name      string
+	Type      string // gmail | ses | m365 | smtp
+	Endpoint  string // host:port
+	AuthMode  string // xoauth2 | smtp-auth | ip | iam
+	Enabled   bool
+	SecretRef string // names the credential secret (resolved at startup)
+}
+
+// RoutingRule maps a recipient/sender domain to an ordered provider chain
+// (row in the routing_rules table). A rule with both domains empty is the
+// default. ProviderChain[0] is primary; the rest are failover.
+type RoutingRule struct {
+	ID              string
+	RecipientDomain string
+	SenderDomain    string
+	ProviderChain   []string
+	Priority        int
+	Enabled         bool
+}
+
 // AllowsSender reports whether this account may use the given sender domain.
 // An empty AllowedSenderDomains means "any" (single-tenant convenience).
 func (a *Account) AllowsSender(domain string) bool {

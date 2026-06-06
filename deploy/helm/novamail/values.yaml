@@ -62,11 +62,15 @@ delivery:
   env:
     NOVAMAIL_HTTP_ADDR: ":8080"
     NOVAMAIL_BODY_STORE: "/var/lib/novamail/bodies"
-  # M1: single generic SMTP smarthost. The Mailpit test sink is the default.
-  smarthost:
-    addr: "novamail-mailpit:1025"
-    tls: "none"
-    insecure: "true"
+    NOVAMAIL_PROVIDER_SECRETS: "/etc/novamail/provider-secrets"
+  # Providers + routing live in Postgres (single source of truth). Provider
+  # credentials are resolved by secret_ref from this optional Secret, mounted
+  # read-only; keys are the secret_ref values, each a JSON {username,password,
+  # clientId,clientSecret,refreshToken}.
+  providerSecrets:
+    enabled: false
+    secretName: novamail-provider-creds
+    mountPath: /etc/novamail/provider-secrets
   # Outbound DKIM signing. Key lives in an out-of-band Secret mounted read-only.
   dkim:
     enabled: true
