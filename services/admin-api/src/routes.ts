@@ -231,7 +231,20 @@ export function registerRoutes(app: FastifyInstance): void {
   });
   app.get("/api/auth/me", async (req, reply) => {
     if (!req.operator) return reply.code(401).send({ error: "not authenticated" });
-    return { username: req.operator.username, role: req.operator.role };
+    return { id: req.operator.sub, username: req.operator.username, role: req.operator.role };
+  });
+  // Self-service password change for the logged-in operator.
+  app.post("/api/auth/password", async (req, reply) => {
+    if (!req.operator) return reply.code(401).send({ error: "operator session required" });
+    const b = req.body as { current_password?: string; new_password?: string };
+    if (!b.current_password || !b.new_password) return reply.code(400).send({ error: "current and new password required" });
+    if (b.new_password.length < 6) return reply.code(400).send({ error: "new password too short (min 6)" });
+    const { rows } = await pool.query("SELECT password_hash FROM operators WHERE id=$1", [req.operator.sub]);
+    if (rows.length === 0 || !(await bcrypt.compare(b.current_password, rows[0].password_hash))) {
+      return reply.code(401).send({ error: "current password is incorrect" });
+    }
+    await pool.query("UPDATE operators SET password_hash=$1 WHERE id=$2", [await bcrypt.hash(b.new_password, 10), req.operator.sub]);
+    return { ok: true };
   });
 
   // Operator management (admin users).

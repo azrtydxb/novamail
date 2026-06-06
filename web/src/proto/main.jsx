@@ -1,7 +1,7 @@
 /* NovaMail app shell — ported from the prototype. Preferences persist to
    localStorage (the design-review tweaks panel does not ship; the same prefs
    live in Settings). Live data comes from the Admin API via window.Store. */
-const { useState: useAppState, useEffect: useAppEffect } = React;
+const { useState: useAppState, useEffect: useAppEffect, useRef: useAppRef } = React;
 
 const PREF_DEFAULTS = {
   theme: 'dark', accent: 'violet', fontPair: 'jetbrains-inter', density: 'cozy',
@@ -48,24 +48,81 @@ function useLiveTelemetry() {
   return { queueDepth: m.queueDepth || 0, inRate, outRate };
 }
 
-function TopBar({ route, onToggleSidebar, onToggleTheme, theme, onOpenPalette }) {
+function UserMenu({ operator, onLogout }) {
+  const [open, setOpen] = useAppState(false);
+  const ref = useAppRef(null);
+  useAppEffect(() => {
+    if (!open) return;
+    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+  const name = (operator && operator.username) || 'operator';
+  const role = (operator && operator.role) || '';
+  const initial = name.charAt(0).toUpperCase();
+  const Item = ({ icon, label, onClick, danger }) => (
+    <button onClick={() => { setOpen(false); onClick(); }} className="mono" style={{
+      display: 'flex', alignItems: 'center', gap: 9, width: '100%', padding: '8px 12px', fontSize: 12.5,
+      color: danger ? 'var(--accent-danger)' : 'var(--fg-1)', textAlign: 'left',
+    }}
+      onMouseEnter={(e) => e.currentTarget.style.background = 'var(--bg-hover)'}
+      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+    >{icon}{label}</button>
+  );
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, height: 44, padding: '0 14px', borderBottom: '1px solid var(--line)', background: 'var(--bg)', flexShrink: 0 }}>
-      <IconBtn title="Toggle sidebar (⌘B)" onClick={onToggleSidebar}><I.PanelLeft size={15} /></IconBtn>
-      <div className="mono" style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', alignItems: 'center', gap: 7 }}>
-        <span style={{ color: 'var(--fg-3)' }}>relay-kw</span>
-        <span style={{ color: 'var(--fg-4)' }}>/</span>
-        <span style={{ color: 'var(--fg-1)' }}>{ROUTE_TITLE[route]}</span>
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button onClick={() => setOpen((o) => !o)} title={name} style={{
+        display: 'flex', alignItems: 'center', gap: 7, height: 30, padding: '0 7px 0 5px', borderRadius: 7,
+        background: open ? 'var(--bg-2)' : 'transparent', border: '1px solid', borderColor: open ? 'var(--line-strong)' : 'transparent',
+      }}
+        onMouseEnter={(e) => { if (!open) e.currentTarget.style.background = 'var(--bg-hover)'; }}
+        onMouseLeave={(e) => { if (!open) e.currentTarget.style.background = 'transparent'; }}
+      >
+        <span className="mono" style={{ width: 22, height: 22, borderRadius: '50%', background: 'var(--accent)', color: 'var(--accent-fg)', fontSize: 11, fontWeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>{initial}</span>
+        <span className="mono" style={{ fontSize: 12, color: 'var(--fg-2)', maxWidth: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+        <I.ChevronD size={13} style={{ color: 'var(--fg-4)' }} />
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 38, right: 0, width: 210, background: 'var(--bg-1)', border: '1px solid var(--line-strong)', borderRadius: 10, boxShadow: 'var(--shadow-lg)', padding: 5, zIndex: 120, animation: 'fadeUp 130ms ease' }}>
+          <div style={{ padding: '8px 12px 10px', borderBottom: '1px solid var(--line)', marginBottom: 5 }}>
+            <div style={{ fontSize: 13, color: 'var(--fg)', fontWeight: 500 }}>{name}</div>
+            <div className="mono" style={{ fontSize: 10.5, color: 'var(--fg-4)', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: 2 }}>{role || 'operator'}</div>
+          </div>
+          <Item icon={<I.Users size={14} />} label="Profile" onClick={() => window.nmModal({ kind: 'profile' })} />
+          <Item icon={<I.Lock size={14} />} label="Change password" onClick={() => window.nmModal({ kind: 'password' })} />
+          <div style={{ height: 1, background: 'var(--line)', margin: '5px 0' }} />
+          <Item icon={<I.ArrowRight size={14} />} label="Log out" onClick={onLogout} danger />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TopBar({ route, onToggleSidebar, onToggleTheme, theme, onOpenPalette, operator, onLogout }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', height: 44, padding: '0 14px', borderBottom: '1px solid var(--line)', background: 'var(--bg)', flexShrink: 0 }}>
+      {/* left: sidebar toggle + breadcrumb */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+        <IconBtn title="Toggle sidebar (⌘B)" onClick={onToggleSidebar}><I.PanelLeft size={15} /></IconBtn>
+        <div className="mono" style={{ fontSize: 12, color: 'var(--fg-2)', display: 'flex', alignItems: 'center', gap: 7, overflow: 'hidden' }}>
+          <span style={{ color: 'var(--fg-3)' }}>relay-kw</span>
+          <span style={{ color: 'var(--fg-4)' }}>/</span>
+          <span style={{ color: 'var(--fg-1)', whiteSpace: 'nowrap' }}>{ROUTE_TITLE[route]}</span>
+        </div>
       </div>
-      <div style={{ flex: 1 }} />
-      <IconBtn title="Toggle theme" onClick={onToggleTheme}>{theme === 'dark' ? <I.Sun size={15} /> : <I.Moon size={15} />}</IconBtn>
+      {/* center: command / search */}
       <button onClick={onOpenPalette} className="mono" style={{
-        display: 'flex', alignItems: 'center', gap: 8, height: 30, padding: '0 9px 0 11px', borderRadius: 7,
+        display: 'flex', alignItems: 'center', gap: 8, height: 30, width: 320, maxWidth: '40vw', padding: '0 10px', borderRadius: 7,
         background: 'var(--bg-1)', border: '1px solid var(--line)', color: 'var(--fg-3)', fontSize: 12,
       }}
         onMouseEnter={(e) => e.currentTarget.style.borderColor = 'var(--line-strong)'}
         onMouseLeave={(e) => e.currentTarget.style.borderColor = 'var(--line)'}
-      ><I.Command size={13} />command<span className="kbd">⌘K</span></button>
+      ><I.Search size={13} /><span style={{ flex: 1, textAlign: 'left' }}>search or run a command…</span><span className="kbd">⌘K</span></button>
+      {/* right: theme + user menu */}
+      <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'flex-end' }}>
+        <IconBtn title="Toggle theme" onClick={onToggleTheme}>{theme === 'dark' ? <I.Sun size={15} /> : <I.Moon size={15} />}</IconBtn>
+        <UserMenu operator={operator} onLogout={onLogout} />
+      </div>
     </div>
   );
 }
@@ -133,7 +190,7 @@ function App() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg)' }}>
-      <TopBar route={route} theme={t.theme} onToggleSidebar={() => setSidebarOpen((s) => !s)} onToggleTheme={() => setTweak({ theme: t.theme === 'dark' ? 'light' : 'dark' })} onOpenPalette={() => setPaletteOpen(true)} />
+      <TopBar route={route} theme={t.theme} operator={window.NM_DATA.OPERATOR} onLogout={() => { window.Store.logout(); setAuthed(false); }} onToggleSidebar={() => setSidebarOpen((s) => !s)} onToggleTheme={() => setTweak({ theme: t.theme === 'dark' ? 'light' : 'dark' })} onOpenPalette={() => setPaletteOpen(true)} />
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: sidebarOpen ? '248px 1fr' : '1fr', minHeight: 0 }}>
         {sidebarOpen && <Sidebar route={route} onNavigate={navigate} onCollapse={() => setSidebarOpen(false)} onOpenPalette={() => setPaletteOpen(true)} queueDepth={live.queueDepth} />}
         {main}
