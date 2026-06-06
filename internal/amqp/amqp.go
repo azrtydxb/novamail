@@ -23,6 +23,9 @@ const (
 	WorkQueue = "relay.work.q"
 	// DLQ holds permanently-failed messages; the DSN generator consumes it.
 	DLQ = "relay.dlq"
+	// ConfigExchange is the fanout the Admin API publishes config.changed events
+	// to; each data-plane service binds an exclusive queue and hot-reloads.
+	ConfigExchange = "config.changed"
 )
 
 // WaitTier is a retry backoff stage: a queue with a message TTL whose dead
@@ -174,6 +177,48 @@ func (c *Conn) Consume(prefetch int) (<-chan amqp.Delivery, error) {
 		return nil, fmt.Errorf("consume: %w", err)
 	}
 	return d, nil
+}
+
+// PublishConfig publishes a config.changed event to the fanout exchange.
+func (c *Conn) PublishConfig(ctx context.Context, body []byte) error {
+	if err := c.ch.ExchangeDeclare(ConfigExchange, "fanout", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare config exchange: %w", err)
+	}
+	return c.ch.PublishWithContext(ctx, ConfigExchange, "", false, false, amqp.Publishing{
+		ContentType:  "application/json",
+		DeliveryMode: amqp.Transient,
+		Body:         body,
+	})
+}
+
+// SubscribeConfig binds an exclusive, auto-delete queue to the config fanout and
+// invokes handler with each event body. It opens its own channel so it does not
+// interfere with the work-queue consumer's QoS. Runs until the connection closes.
+func (c *Conn) SubscribeConfig(handler func([]byte)) error {
+	ch, err := c.conn.Channel()
+	if err != nil {
+		return fmt.Errorf("config channel: %w", err)
+	}
+	if err := ch.ExchangeDeclare(ConfigExchange, "fanout", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare config exchange: %w", err)
+	}
+	q, err := ch.QueueDeclare("", false, true, true, false, nil) // exclusive, auto-delete
+	if err != nil {
+		return fmt.Errorf("declare config queue: %w", err)
+	}
+	if err := ch.QueueBind(q.Name, "", ConfigExchange, false, nil); err != nil {
+		return fmt.Errorf("bind config queue: %w", err)
+	}
+	msgs, err := ch.Consume(q.Name, "", true, true, false, false, nil) // autoAck, exclusive
+	if err != nil {
+		return fmt.Errorf("consume config: %w", err)
+	}
+	go func() {
+		for m := range msgs {
+			handler(m.Body)
+		}
+	}()
+	return nil
 }
 
 // Ping reports whether the channel/connection is usable (for readiness).
