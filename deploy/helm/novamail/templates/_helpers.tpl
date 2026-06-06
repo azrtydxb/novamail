@@ -61,6 +61,17 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 app.kubernetes.io/component: admin-api
 {{- end -}}
 
+{{- define "novamail.webImage" -}}
+{{- $tag := .Values.image.tag | default .Chart.AppVersion -}}
+{{- printf "%s/web:%s" .Values.image.registry $tag -}}
+{{- end -}}
+
+{{- define "novamail.web.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "novamail.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+app.kubernetes.io/component: web
+{{- end -}}
+
 {{- define "novamail.depsEnvFrom" -}}
 - secretRef:
     name: {{ .Values.secrets.postgres }}
