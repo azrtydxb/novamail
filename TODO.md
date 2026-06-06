@@ -57,8 +57,8 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [x] Secrets: envelope-encryption (AES-256-GCM, Go decrypt + TS encrypt, KEK from secret) for provider creds; managed via Admin API.
 
 ## M5 — Packaging
-- [ ] Helm chart hardening (HA defaults), docker-compose, systemd units.
-- [ ] cert-manager integration; multi-arch distroless images finalized.
+- [x] Helm chart hardening (2 replicas + PDBs), docker-compose, systemd units.
+- [x] cert-manager integration; multi-arch (arm64+amd64) distroless data-plane images.
 
 ## Cross-cutting
 - [ ] ARC seal (ARC sealing for forwarded mail), SPF/DMARC awareness.

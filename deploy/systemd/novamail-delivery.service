@@ -1,0 +1,21 @@
+[Unit]
+Description=novamail delivery worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=novamail
+Group=novamail
+EnvironmentFile=/etc/novamail/novamail.env
+ExecStart=/usr/local/bin/novamail-delivery
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/novamail
+
+[Install]
+WantedBy=multi-user.target
