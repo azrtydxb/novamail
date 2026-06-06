@@ -6,6 +6,8 @@ name: CI
 on:
   push:
     branches: [main]
+    # Docs / bootstrap-only changes don't need an image rebuild + deploy.
+    paths-ignore: ["docs/**", "**.md", "deploy/cluster/**", ".github/workflows/pages.yml"]
 
 concurrency:
   group: ci-${{ github.ref }}
