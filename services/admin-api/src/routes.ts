@@ -25,7 +25,7 @@ const RESOURCES: Record<string, Resource> = {
   "tls-policy": { table: "tls_policy", slice: "tls_policy", pk: "id", cols: ["min_version", "starttls_required", "provider_id"] },
 };
 
-function pick(body: Record<string, unknown>, cols: string[]): [string[], unknown[]] {
+export function pick(body: Record<string, unknown>, cols: string[]): [string[], unknown[]] {
   const keys: string[] = [];
   const vals: unknown[] = [];
   for (const c of cols) {
