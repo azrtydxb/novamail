@@ -43,7 +43,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 ## M2 — Resilience
 - [x] Retry tiers: `wait.30s/5m/30m` queues (TTL + DLX back to `relay.work`).
 - [x] `relay.dlq` + `cmd/dsn` (RFC 3464 DSN generator) republishing bounces.
-- [~] RabbitMQ 3-node quorum cluster (TODO); graceful drain on shutdown (done).
+- [x] RabbitMQ 3-node quorum cluster (RabbitMQ Cluster Operator); graceful drain on shutdown.
 
 ## M3 — Providers + routing
 - [x] Providers: Gmail/XOAUTH2 (token refresh), Amazon SES, Microsoft 365 (factory; live creds via M4 secret store).
