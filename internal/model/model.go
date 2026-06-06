@@ -91,6 +91,15 @@ type MessageMeta struct {
 	SizeBytes int64
 }
 
+// DKIMKey is a signing key (dkim_keys row). PrivateRef points at the
+// envelope-encrypted PEM in the secret store.
+type DKIMKey struct {
+	Domain     string
+	Selector   string
+	PrivateRef string
+	Rotation   string
+}
+
 // RelayClient is a trusted source range (relay_clients) that may relay WITHOUT
 // SMTP AUTH, restricted to AllowedSenderDomains (empty = any).
 type RelayClient struct {

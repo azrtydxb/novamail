@@ -1,6 +1,7 @@
 // Package dkim signs outbound messages with DKIM. Forwarding/relaying breaks
-// SPF/DKIM alignment otherwise. M1 loads a single key from a mounted PEM; the
-// DB-driven multi-selector/rotation model (dkim_keys table) arrives later.
+// SPF/DKIM alignment otherwise. Load reads a single mounted PEM (fallback);
+// LoadPEM builds a signer from an in-memory key for the DB-driven, per-domain
+// multi-selector/rotation model (dkim_keys, keys decrypted from the secret store).
 package dkim
 
 import (
@@ -36,6 +37,23 @@ func Load(domain, selector, keyPath string) (*Signer, error) {
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
 		return nil, errors.New("dkim: no PEM block in key file")
+	}
+	key, err := parseKey(block.Bytes)
+	if err != nil {
+		return nil, err
+	}
+	return &Signer{domain: domain, selector: selector, key: key}, nil
+}
+
+// LoadPEM builds a Signer from an in-memory PEM private key (used by the
+// DB-driven, per-domain DKIM path where keys are decrypted from the secret store).
+func LoadPEM(domain, selector string, pemBytes []byte) (*Signer, error) {
+	if domain == "" || selector == "" || len(pemBytes) == 0 {
+		return nil, errors.New("dkim: domain, selector and key required")
+	}
+	block, _ := pem.Decode(pemBytes)
+	if block == nil {
+		return nil, errors.New("dkim: no PEM block in key")
 	}
 	key, err := parseKey(block.Bytes)
 	if err != nil {

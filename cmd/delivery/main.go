@@ -16,6 +16,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -41,9 +42,9 @@ import (
 const maxRateBlock = 5 * time.Second
 
 var (
-	relayed = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_relayed_total", Help: "Messages successfully relayed upstream."})
+	relayed  = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_relayed_total", Help: "Messages successfully relayed upstream."})
 	deferred = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_deferred_total", Help: "Messages deferred (transient upstream failure)."})
-	failed  = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_failed_total", Help: "Messages permanently failed."})
+	failed   = promauto.NewCounter(prometheus.CounterOpts{Name: "novamail_delivery_failed_total", Help: "Messages permanently failed."})
 )
 
 func env(k, def string) string {
@@ -158,10 +159,11 @@ func main() {
 // routeState is an immutable snapshot of the DB-driven config, swapped
 // atomically on config.changed so handle() never reads a half-updated map.
 type routeState struct {
-	engine      *routing.Engine
-	instances   map[string]providers.Provider // provider id → instance
-	limiter     *ratelimit.Limiter            // per recipient domain (scope=recipient_domain)
-	provLimiter *ratelimit.Limiter            // per provider name (scope=provider)
+	engine       *routing.Engine
+	instances    map[string]providers.Provider // provider id → instance
+	limiter      *ratelimit.Limiter            // per recipient domain (scope=recipient_domain)
+	provLimiter  *ratelimit.Limiter            // per provider name (scope=provider)
+	dkimByDomain map[string]*dkim.Signer       // DB-driven DKIM signers, by sender domain
 }
 
 type worker struct {
@@ -300,14 +302,28 @@ func (w *worker) materialize(ctx context.Context, job *model.RelayJob) ([]byte, 
 	defer func() { _ = body.Close() }()
 
 	var src io.Reader = body
-	if w.signer != nil && w.signer.Domain() == job.RoutingHints.SenderDomain {
-		signed, serr := w.signer.Sign(body)
+	if sgn := w.signerFor(job.RoutingHints.SenderDomain); sgn != nil {
+		signed, serr := sgn.Sign(body)
 		if serr != nil {
 			return nil, serr
 		}
 		src = signed
 	}
 	return io.ReadAll(src)
+}
+
+// signerFor resolves the DKIM signer for a sender domain: a DB-driven key
+// (dkim_keys) takes precedence, falling back to the mounted single key.
+func (w *worker) signerFor(domain string) *dkim.Signer {
+	if st := w.state.Load(); st != nil {
+		if s, ok := st.dkimByDomain[strings.ToLower(domain)]; ok {
+			return s
+		}
+	}
+	if w.signer != nil && strings.EqualFold(w.signer.Domain(), domain) {
+		return w.signer
+	}
+	return nil
 }
 
 // defer_ records a deferral and escalates the job through the retry tiers, or
@@ -369,12 +385,43 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 		}
 		instances[p.ID] = inst
 	}
-	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules), "rateLimitSpecs", len(domainSpecs))
+	// DB-driven DKIM signers (per domain, active selector). Private keys are
+	// decrypted from the secret store with the KEK.
+	dkimByDomain := map[string]*dkim.Signer{}
+	if cipher != nil {
+		keys, kerr := database.GetActiveDKIMKeys(ctx)
+		if kerr != nil {
+			logger.Error("load dkim keys", "err", kerr)
+		}
+		for _, k := range keys {
+			if k.PrivateRef == "" {
+				continue
+			}
+			env, gerr := database.GetSecret(ctx, k.PrivateRef)
+			if gerr != nil || env == "" {
+				continue
+			}
+			pemBytes, derr := cipher.Decrypt(env)
+			if derr != nil {
+				logger.Error("decrypt dkim key", "domain", k.Domain, "err", derr)
+				continue
+			}
+			sgn, serr := dkim.LoadPEM(k.Domain, k.Selector, pemBytes)
+			if serr != nil {
+				logger.Error("load dkim signer", "domain", k.Domain, "err", serr)
+				continue
+			}
+			dkimByDomain[strings.ToLower(k.Domain)] = sgn
+		}
+	}
+
+	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules), "rateLimitSpecs", len(domainSpecs), "dkimDomains", len(dkimByDomain))
 	return &routeState{
-		engine:      routing.Build(rules),
-		instances:   instances,
-		limiter:     ratelimit.Build(domainSpecs),
-		provLimiter: ratelimit.Build(provSpecs),
+		engine:       routing.Build(rules),
+		instances:    instances,
+		limiter:      ratelimit.Build(domainSpecs),
+		provLimiter:  ratelimit.Build(provSpecs),
+		dkimByDomain: dkimByDomain,
 	}
 }
 
