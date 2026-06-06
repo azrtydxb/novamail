@@ -164,6 +164,64 @@ export function registerRoutes(app: FastifyInstance): void {
     return reply.code(204).send();
   });
 
+  // Suppression list (recipients we stop sending to).
+  app.get("/api/suppressions", async () => {
+    const { rows } = await pool.query("SELECT address, reason, source, created_at FROM suppressions ORDER BY created_at DESC");
+    return rows;
+  });
+  app.post("/api/suppressions", async (req, reply) => {
+    const b = req.body as { address?: string; reason?: string };
+    if (!b.address) return reply.code(400).send({ error: "address required" });
+    await pool.query(
+      `INSERT INTO suppressions (address, reason, source) VALUES (lower($1),$2,'manual')
+       ON CONFLICT (address) DO UPDATE SET reason=EXCLUDED.reason`,
+      [b.address, b.reason ?? "manual"],
+    );
+    await publishConfigChanged(["suppressions"]);
+    return reply.code(201).send({ address: b.address.toLowerCase() });
+  });
+  app.delete("/api/suppressions/:address", async (req, reply) => {
+    const a = (req.params as { address: string }).address;
+    const { rowCount } = await pool.query("DELETE FROM suppressions WHERE address=lower($1)", [a]);
+    if (!rowCount) return reply.code(404).send({ error: "not found" });
+    await publishConfigChanged(["suppressions"]);
+    return reply.code(204).send();
+  });
+
+  // Provider bounce/complaint feedback (Amazon SES via SNS; generic fallback).
+  app.post("/api/feedback/:provider", async (req, reply) => {
+    const provider = (req.params as { provider: string }).provider;
+    const addrs: string[] = [];
+    let reason = "hard_bounce";
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const body = req.body as any;
+    try {
+      if (body?.Message !== undefined) {
+        const msg = typeof body.Message === "string" ? JSON.parse(body.Message) : body.Message;
+        if (msg.notificationType === "Complaint") {
+          reason = "complaint";
+          for (const r of msg.complaint?.complainedRecipients ?? []) addrs.push(r.emailAddress);
+        } else if (msg.notificationType === "Bounce") {
+          for (const r of msg.bounce?.bouncedRecipients ?? []) addrs.push(r.emailAddress);
+        }
+      } else if (Array.isArray(body?.addresses)) {
+        addrs.push(...body.addresses);
+        reason = body.reason ?? reason;
+      }
+    } catch {
+      return reply.code(400).send({ error: "unparseable feedback" });
+    }
+    for (const a of addrs) {
+      await pool.query(
+        `INSERT INTO suppressions (address, reason, source) VALUES (lower($1),$2,$3)
+         ON CONFLICT (address) DO UPDATE SET reason=EXCLUDED.reason`,
+        [a, reason, provider],
+      );
+    }
+    if (addrs.length) await publishConfigChanged(["suppressions"]);
+    return { suppressed: addrs.length };
+  });
+
   // Message tracing (read-only): list + per-message event timeline.
   app.get("/api/messages", async (req) => {
     const q = req.query as { status?: string; q?: string; limit?: string };

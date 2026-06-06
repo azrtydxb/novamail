@@ -112,6 +112,15 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 	detail, _ := g.db.LastDetail(hctx, job.MessageID)
 	_ = g.db.RecordAttempt(hctx, job.MessageID, model.StatusBounced, "bounced", "dsn", detail)
 
+	// Feedback loop: a real message reaching the DLQ is a hard bounce — suppress
+	// its recipients so we stop sending to them, and notify the data plane.
+	if job.Envelope.MailFrom != "" {
+		for _, rcpt := range job.Envelope.RcptTo {
+			_ = g.db.AddSuppression(hctx, rcpt, "hard_bounce", "dsn", detail)
+		}
+		_ = g.bus.PublishConfig(hctx, []byte(`{"v":1,"epoch":0,"slices":["suppressions"]}`))
+	}
+
 	// Null sender (<>) means this is already a bounce — never bounce a bounce.
 	// NOTIFY=NEVER (DSNSuppress) means the sender asked for no failure notice.
 	if job.Envelope.MailFrom == "" || job.DSNSuppress {
