@@ -34,7 +34,7 @@ func main() {
 	}
 	defer database.Close()
 
-	bodies, err := store.NewFSStore(env("NOVAMAIL_BODY_STORE", "/var/lib/novamail/bodies"))
+	bodies, err := store.Open(env("NOVAMAIL_BODY_STORE", "postgres"), database.Pool())
 	if err != nil {
 		logger.Error("init body store", "err", err)
 		os.Exit(1)

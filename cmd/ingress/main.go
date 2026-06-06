@@ -52,7 +52,7 @@ func loadConfig() config {
 		submissionAddr: env("NOVAMAIL_SUBMISSION_ADDR", ":2587"),
 		implicitAddr:   env("NOVAMAIL_IMPLICIT_ADDR", ":2465"),
 		httpAddr:       env("NOVAMAIL_HTTP_ADDR", ":8080"),
-		bodyStore:      env("NOVAMAIL_BODY_STORE", "/var/lib/novamail/bodies"),
+		bodyStore:      env("NOVAMAIL_BODY_STORE", "postgres"),
 		dsn:            os.Getenv("DSN"),
 		amqpURL:        os.Getenv("AMQP_URL"),
 		tlsCert:        os.Getenv("NOVAMAIL_TLS_CERT"),
@@ -83,12 +83,6 @@ func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	cfg := loadConfig()
 
-	bodies, err := store.NewFSStore(cfg.bodyStore)
-	if err != nil {
-		logger.Error("init body store", "err", err)
-		os.Exit(1)
-	}
-
 	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer initCancel()
 
@@ -98,6 +92,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer database.Close()
+
+	bodies, err := store.Open(cfg.bodyStore, database.Pool())
+	if err != nil {
+		logger.Error("init body store", "err", err)
+		os.Exit(1)
+	}
 
 	bus, err := amqp.Dial(cfg.amqpURL)
 	if err != nil {

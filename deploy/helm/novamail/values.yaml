@@ -35,7 +35,7 @@ ingressApp:
     NOVAMAIL_SMTP_ADDR: ":2525"        # plaintext (no AUTH); in-cluster only
     NOVAMAIL_SUBMISSION_ADDR: ":2587"  # STARTTLS submission, exposed as 587
     NOVAMAIL_IMPLICIT_ADDR: ":2465"    # implicit TLS, exposed as 465
-    NOVAMAIL_BODY_STORE: "/var/lib/novamail/bodies"
+    NOVAMAIL_BODY_STORE: "postgres"
 
 # Server TLS for the SMTP listeners. cert-manager issues the cert from the
 # cluster-ca issuer; AUTH is only offered once the connection is TLS.
@@ -57,7 +57,7 @@ dsn:
     limits: { cpu: 250m, memory: 128Mi }
   env:
     NOVAMAIL_HTTP_ADDR: ":8080"
-    NOVAMAIL_BODY_STORE: "/var/lib/novamail/bodies"
+    NOVAMAIL_BODY_STORE: "postgres"
 
 # Management plane: Fastify Admin API (CRUD over the config tables + config.changed).
 adminApi:
@@ -96,7 +96,7 @@ delivery:
     limits: { cpu: 500m, memory: 256Mi }
   env:
     NOVAMAIL_HTTP_ADDR: ":8080"
-    NOVAMAIL_BODY_STORE: "/var/lib/novamail/bodies"
+    NOVAMAIL_BODY_STORE: "postgres"
     NOVAMAIL_PROVIDER_SECRETS: "/etc/novamail/provider-secrets"
   # Providers + routing live in Postgres (single source of truth). Provider
   # credentials are resolved by secret_ref from this optional Secret, mounted
@@ -117,7 +117,10 @@ delivery:
 
 # Shared body store — ReadWriteMany so ingress and delivery pods share it.
 bodyStore:
-  enabled: true
+  # Message bodies are stored in Postgres (bytea) by default — no shared
+  # filesystem needed. Set enabled=true (and NOVAMAIL_BODY_STORE to mountPath on
+  # each service) only if you prefer a filesystem RWX volume instead.
+  enabled: false
   storageClassName: longhorn
   accessMode: ReadWriteMany
   size: 10Gi
