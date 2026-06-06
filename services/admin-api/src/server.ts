@@ -42,11 +42,15 @@ app.route({
 // OR the static x-api-key (automation). Operators with a non-admin role are
 // read-only; the API key has full access. /api/auth/* and health are open.
 const apiKey = process.env.NOVAMAIL_ADMIN_API_KEY;
+// Health is open. Login/session traffic is validated by better-auth itself.
+// NOTE: /api/feedback/* is NOT open — it requires the API key (provider
+// bounce/complaint webhooks must be delivered via an authenticated forwarder),
+// preventing anonymous suppression-list injection.
 const OPEN_PATHS = new Set(["/healthz", "/readyz"]);
 const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 app.addHook("onRequest", async (req, reply) => {
   const path = req.url.split("?")[0];
-  if (OPEN_PATHS.has(path) || path.startsWith("/api/auth/") || req.url.startsWith("/api/feedback/")) return;
+  if (OPEN_PATHS.has(path) || path.startsWith("/api/auth/")) return;
 
   const session = await auth.api.getSession({ headers: fromNodeHeaders(req.headers) }).catch(() => null);
   if (session?.user) {
@@ -58,11 +62,9 @@ app.addHook("onRequest", async (req, reply) => {
     }
     return;
   }
-  if (!apiKey) {
-    req.actor = "anonymous";
-    return;
-  }
-  if (req.headers["x-api-key"] === apiKey) {
+  // Fail closed: a request with no valid session must present the API key.
+  // (If no API key is configured, only session auth is accepted — never anonymous.)
+  if (apiKey && req.headers["x-api-key"] === apiKey) {
     req.actor = "api-key";
     return;
   }

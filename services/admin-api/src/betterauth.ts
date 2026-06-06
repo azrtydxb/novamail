@@ -7,14 +7,24 @@ import { admin } from "better-auth/plugins";
 import { pool } from "./db.js";
 
 const baseURL = process.env.BETTER_AUTH_URL || "http://localhost:3000";
-const trustedOrigins = (process.env.BETTER_AUTH_TRUSTED_ORIGINS ||
-  "https://novamail.kw.local,http://localhost:5173,http://localhost:5181,http://localhost:5182")
-  .split(",").map((s) => s.trim()).filter(Boolean);
+// trustedOrigins = the public GUI origin (baseURL) plus any explicit overrides.
+// No hardcoded localhost defaults (those would weaken CSRF in production).
+const trustedOrigins = Array.from(new Set([
+  baseURL,
+  ...(process.env.BETTER_AUTH_TRUSTED_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean),
+]));
+
+// Fail fast: a real signing secret is mandatory (no insecure default). A weak or
+// missing secret means session tokens can be forged → full admin takeover.
+const secret = process.env.BETTER_AUTH_SECRET || process.env.NOVAMAIL_ADMIN_JWT_SECRET || process.env.NOVAMAIL_ADMIN_API_KEY;
+if (!secret || secret.length < 16) {
+  throw new Error("BETTER_AUTH_SECRET (or NOVAMAIL_ADMIN_API_KEY) must be set to a strong value (>=16 chars)");
+}
 
 export const auth = betterAuth({
   database: pool,
   baseURL,
-  secret: process.env.BETTER_AUTH_SECRET || process.env.NOVAMAIL_ADMIN_JWT_SECRET || process.env.NOVAMAIL_ADMIN_API_KEY || "dev-secret-change-me",
+  secret,
   basePath: "/api/auth",
   trustedOrigins,
   emailAndPassword: {
