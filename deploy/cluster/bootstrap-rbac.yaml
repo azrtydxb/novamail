@@ -12,6 +12,10 @@ metadata:
   name: novamail-deployer
   namespace: novamail
 rules:
+  # NOTE: `secrets` keeps broad verbs because Helm 3 stores release state in
+  # Secrets (sh.helm.release.*) in this namespace, so the deployer must
+  # create/update/delete them. Properly least-privileging app-secret access
+  # requires switching Helm to the configmap storage driver first (follow-up).
   - apiGroups: [""]
     resources: [services, persistentvolumeclaims, configmaps, secrets, serviceaccounts, pods, events, endpoints]
     verbs: ["*"]
