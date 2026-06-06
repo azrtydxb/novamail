@@ -158,9 +158,10 @@ func main() {
 // routeState is an immutable snapshot of the DB-driven config, swapped
 // atomically on config.changed so handle() never reads a half-updated map.
 type routeState struct {
-	engine    *routing.Engine
-	instances map[string]providers.Provider // provider id → instance
-	limiter   *ratelimit.Limiter
+	engine      *routing.Engine
+	instances   map[string]providers.Provider // provider id → instance
+	limiter     *ratelimit.Limiter            // per recipient domain (scope=recipient_domain)
+	provLimiter *ratelimit.Limiter            // per provider name (scope=provider)
 }
 
 type worker struct {
@@ -241,6 +242,26 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 	sawDefer := false
 	var lastProvider, lastDetail string
 	for _, p := range chain {
+		// Per-provider outbound rate limit: pace small delays, skip this provider
+		// (defer / advance the chain) when its budget is exhausted.
+		if delay, pres, limited := st.provLimiter.Reserve(p.Name()); limited {
+			if delay > maxRateBlock {
+				pres.Cancel()
+				sawDefer = true
+				lastProvider, lastDetail = p.Name(), "provider rate limit exceeded"
+				w.log.Warn("provider rate limited", "id", job.MessageID, "provider", p.Name())
+				continue
+			}
+			if delay > 0 {
+				select {
+				case <-time.After(delay):
+				case <-hctx.Done():
+					pres.Cancel()
+					_ = d.Nack(false, true)
+					return
+				}
+			}
+		}
 		res, _ := p.Send(hctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
 		lastProvider, lastDetail = p.Name(), res.Detail
 		if res.Outcome == providers.Delivered {
@@ -325,11 +346,18 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 	if err != nil {
 		logger.Error("load rate limits", "err", err)
 	}
-	// Outbound, per-recipient-domain limits (provider-scoped limits arrive in PR-C).
-	var domainSpecs []ratelimit.Spec
+	// Outbound limits, split by scope: per recipient domain and per provider.
+	var domainSpecs, provSpecs []ratelimit.Spec
 	for _, rl := range limits {
-		if rl.Direction == "out" && rl.Scope == "recipient_domain" {
-			domainSpecs = append(domainSpecs, ratelimit.Spec{Key: rl.ScopeValue, PerSecond: rl.PerSecond, Burst: rl.Burst})
+		if rl.Direction != "out" {
+			continue
+		}
+		spec := ratelimit.Spec{Key: rl.ScopeValue, PerSecond: rl.PerSecond, Burst: rl.Burst}
+		switch rl.Scope {
+		case "recipient_domain":
+			domainSpecs = append(domainSpecs, spec)
+		case "provider":
+			provSpecs = append(provSpecs, spec)
 		}
 	}
 	instances := make(map[string]providers.Provider, len(provs))
@@ -343,9 +371,10 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 	}
 	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules), "rateLimitSpecs", len(domainSpecs))
 	return &routeState{
-		engine:    routing.Build(rules),
-		instances: instances,
-		limiter:   ratelimit.Build(domainSpecs),
+		engine:      routing.Build(rules),
+		instances:   instances,
+		limiter:     ratelimit.Build(domainSpecs),
+		provLimiter: ratelimit.Build(provSpecs),
 	}
 }
 

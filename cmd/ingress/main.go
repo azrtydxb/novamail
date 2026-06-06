@@ -123,6 +123,7 @@ func main() {
 	smtpSrv.ReadTimeout = 60 * time.Second
 	smtpSrv.WriteTimeout = 60 * time.Second
 	smtpSrv.MaxMessageBytes = 50 << 20 // 50 MiB
+	smtpSrv.EnableDSN = true            // honor RFC 3461 NOTIFY/RET params
 
 	// TLS: when a cert is mounted, AUTH is only offered after TLS (STARTTLS) or
 	// on the implicit-TLS port. Without a cert (dev), allow insecure AUTH only

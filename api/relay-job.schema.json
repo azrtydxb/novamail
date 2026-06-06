@@ -5,37 +5,95 @@
   "description": "Lightweight job published by ingress to the relay.work exchange. Carries references, never the body. Versioned: bump 'v' on any breaking change.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["v", "messageId", "bodyRef", "envelope", "attempt", "enqueuedAt"],
+  "required": [
+    "v",
+    "messageId",
+    "bodyRef",
+    "envelope",
+    "attempt",
+    "enqueuedAt"
+  ],
   "properties": {
-    "v": { "type": "integer", "const": 1, "description": "Schema version." },
-    "messageId": { "type": "string", "description": "Stable message id; also the body store key." },
+    "v": {
+      "type": "integer",
+      "const": 1,
+      "description": "Schema version."
+    },
+    "messageId": {
+      "type": "string",
+      "description": "Stable message id; also the body store key."
+    },
     "bodyRef": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["backend", "key"],
+      "required": [
+        "backend",
+        "key"
+      ],
       "properties": {
-        "backend": { "type": "string", "enum": ["fs", "pg"], "description": "Body store backend." },
-        "key": { "type": "string", "description": "Body id within the backend." }
+        "backend": {
+          "type": "string",
+          "enum": [
+            "fs",
+            "pg"
+          ],
+          "description": "Body store backend."
+        },
+        "key": {
+          "type": "string",
+          "description": "Body id within the backend."
+        }
       }
     },
     "envelope": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["mailFrom", "rcptTo"],
+      "required": [
+        "mailFrom",
+        "rcptTo"
+      ],
       "properties": {
-        "mailFrom": { "type": "string", "format": "email-or-empty" },
-        "rcptTo": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+        "mailFrom": {
+          "type": "string",
+          "format": "email-or-empty"
+        },
+        "rcptTo": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "routingHints": {
       "type": "object",
       "additionalProperties": false,
       "properties": {
-        "recipientDomain": { "type": "string" },
-        "senderDomain": { "type": "string" }
+        "recipientDomain": {
+          "type": "string"
+        },
+        "senderDomain": {
+          "type": "string"
+        }
       }
     },
-    "attempt": { "type": "integer", "minimum": 0, "description": "Delivery attempt counter; incremented on each retry tier." },
-    "enqueuedAt": { "type": "string", "format": "date-time" }
+    "attempt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Delivery attempt counter; incremented on each retry tier."
+    },
+    "enqueuedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "dsnReturn": {
+      "type": "string",
+      "description": "RFC 3461 RET (FULL|HDRS)"
+    },
+    "dsnSuppress": {
+      "type": "boolean",
+      "description": "sender requested NOTIFY=NEVER for all recipients"
+    }
   }
 }
