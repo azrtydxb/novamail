@@ -1,5 +1,8 @@
 # novamail — Build TODO
 
+> **Status (kw): M0–M5 implemented, deployed, and verified.** Authenticated TLS submission → DB-routed/failover delivery with DKIM, retry tiers, bounces, per-domain rate limits; 3-node RabbitMQ (operator); management GUI + Admin API with live config hot-reload; envelope-encrypted credentials; HA (2 replicas + PDBs); multi-arch data-plane images. Parked: live Gmail/SES/M365 credential testing (needs real accounts).
+
+
 Derived from `smtp-relay-handover-spec.md`. Front-loaded with **M0 (walking skeleton + CI/CD)** so that build → test → deploy to the **kw** k3s cluster works end-to-end before the real relay logic lands; then the spec milestones M1–M5 fill it in.
 
 Legend: `[ ]` todo · `[~]` in progress · `[x]` done
