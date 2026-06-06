@@ -19,7 +19,7 @@ function Field({ label, type = 'text', value, onChange, placeholder, autoFocus }
 
 function Login({ onSignIn }) {
   const [tab, setTab] = useLoginState('signin');
-  const [user, setUser] = useLoginState('admin');
+  const [user, setUser] = useLoginState('admin@novamail.local');
   const [pass, setPass] = useLoginState('');
   const [err, setErr] = useLoginState('');
   const [busy, setBusy] = useLoginState(false);
@@ -61,7 +61,7 @@ function Login({ onSignIn }) {
           </div>
 
           <div style={{ display: 'flex', flexDirection: 'column', gap: 13 }}>
-            <Field label="operator" value={user} onChange={setUser} placeholder="admin" autoFocus />
+            <Field label="email" value={user} onChange={setUser} placeholder="you@domain.com" autoFocus />
             <div onKeyDown={(e) => { if (e.key === 'Enter') doLogin(); }}>
               <Field label="password" type="password" value={pass} onChange={setPass} placeholder="••••••••••••" />
             </div>

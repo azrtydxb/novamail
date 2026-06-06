@@ -53,6 +53,15 @@ spec:
                   name: {{ .Values.secretKeySecret }}
                   key: NOVAMAIL_SECRET_KEY
                   optional: true
+            # better-auth: public origin (drives cookie Secure flag + CSRF origin)
+            - name: BETTER_AUTH_URL
+              value: {{ .Values.adminApi.publicURL | quote }}
+            - name: BETTER_AUTH_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminApi.apiKeySecret }}
+                  key: NOVAMAIL_ADMIN_API_KEY
+                  optional: true
           envFrom:
             {{- include "novamail.depsEnvFrom" . | nindent 12 }}
           livenessProbe:
