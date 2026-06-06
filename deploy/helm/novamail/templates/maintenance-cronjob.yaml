@@ -32,14 +32,18 @@ spec:
                 {{- include "novamail.depsEnvFrom" . | nindent 16 }}
               env:
                 - name: NOVAMAIL_BODY_STORE
-                  value: {{ .Values.bodyStore.mountPath | quote }}
+                  value: {{ if .Values.bodyStore.enabled }}{{ .Values.bodyStore.mountPath | quote }}{{ else }}"postgres"{{ end }}
+              {{- if .Values.bodyStore.enabled }}
               volumeMounts:
                 - name: bodies
                   mountPath: {{ .Values.bodyStore.mountPath }}
+              {{- end }}
               resources:
                 {{- toYaml .Values.maintenance.resources | nindent 16 }}
+          {{- if .Values.bodyStore.enabled }}
           volumes:
             - name: bodies
               persistentVolumeClaim:
                 claimName: {{ include "novamail.fullname" . }}-bodies
+          {{- end }}
 {{- end }}

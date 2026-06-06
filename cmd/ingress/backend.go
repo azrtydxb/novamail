@@ -25,7 +25,7 @@ import (
 // accounts OR trusted source IP via relay_clients), persists the body, records
 // metadata, and publishes a relay job. The inbound policy is hot-reloaded.
 type backend struct {
-	store  *store.FSStore
+	store store.Store
 	db     *db.DB
 	bus    *amqp.Conn
 	policy atomic.Pointer[inboundPolicy]

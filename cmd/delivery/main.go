@@ -57,12 +57,6 @@ func env(k, def string) string {
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 
-	bodies, err := store.NewFSStore(env("NOVAMAIL_BODY_STORE", "/var/lib/novamail/bodies"))
-	if err != nil {
-		logger.Error("init body store", "err", err)
-		os.Exit(1)
-	}
-
 	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer initCancel()
 	database, err := db.Open(initCtx, os.Getenv("DSN"))
@@ -71,6 +65,12 @@ func main() {
 		os.Exit(1)
 	}
 	defer database.Close()
+
+	bodies, err := store.Open(env("NOVAMAIL_BODY_STORE", "postgres"), database.Pool())
+	if err != nil {
+		logger.Error("init body store", "err", err)
+		os.Exit(1)
+	}
 
 	bus, err := amqp.Dial(os.Getenv("AMQP_URL"))
 	if err != nil {
@@ -167,7 +167,7 @@ type routeState struct {
 }
 
 type worker struct {
-	store     *store.FSStore
+	store     store.Store
 	db        *db.DB
 	bus       *amqp.Conn
 	secretDir string

@@ -32,6 +32,10 @@ func Open(ctx context.Context, dsn string) (*DB, error) {
 
 func (d *DB) Close() { d.pool.Close() }
 
+// Pool exposes the underlying pool (used by the Postgres body store so it can
+// share this connection pool rather than opening a second one).
+func (d *DB) Pool() *pgxpool.Pool { return d.pool }
+
 // Ping checks connectivity (for readiness).
 func (d *DB) Ping(ctx context.Context) error { return d.pool.Ping(ctx) }
 
