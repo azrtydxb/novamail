@@ -1,10 +1,6 @@
 package ratelimit
 
-import (
-	"testing"
-
-	"github.com/azrtydxb/novamail/internal/model"
-)
+import "testing"
 
 func TestUnlimitedWhenNoConfig(t *testing.T) {
 	l := Build(nil)
@@ -12,21 +8,16 @@ func TestUnlimitedWhenNoConfig(t *testing.T) {
 		t.Fatal("expected empty limiter")
 	}
 	if _, _, limited := l.Reserve("anything.com"); limited {
-		t.Fatal("unconfigured domain should be unlimited")
+		t.Fatal("unconfigured key should be unlimited")
 	}
 }
 
 func TestBurstThenThrottle(t *testing.T) {
-	// 1 token/sec, burst 2: first two immediate, third must wait.
-	l := Build([]model.RateLimit{{Domain: "slow.test", PerSecond: 1, Burst: 2}})
-
+	l := Build([]Spec{{Key: "slow.test", PerSecond: 1, Burst: 2}})
 	for i := 0; i < 2; i++ {
 		d, _, limited := l.Reserve("slow.test")
-		if !limited {
-			t.Fatalf("token %d: domain should be limited/tracked", i)
-		}
-		if d > 0 {
-			t.Fatalf("burst token %d should be immediate, got delay %v", i, d)
+		if !limited || d > 0 {
+			t.Fatalf("burst token %d should be immediate (limited=%v delay=%v)", i, limited, d)
 		}
 	}
 	d, res, limited := l.Reserve("slow.test")
@@ -37,15 +28,15 @@ func TestBurstThenThrottle(t *testing.T) {
 }
 
 func TestDefaultStar(t *testing.T) {
-	l := Build([]model.RateLimit{{Domain: "*", PerSecond: 5, Burst: 1}})
+	l := Build([]Spec{{Key: "*", PerSecond: 5, Burst: 1}})
 	if _, _, limited := l.Reserve("unmatched.com"); !limited {
-		t.Fatal("'*' default should apply to unmatched domains")
+		t.Fatal("'*' default should apply to unmatched keys")
 	}
 }
 
 func TestCaseInsensitive(t *testing.T) {
-	l := Build([]model.RateLimit{{Domain: "Slow.Test", PerSecond: 1, Burst: 1}})
+	l := Build([]Spec{{Key: "Slow.Test", PerSecond: 1, Burst: 1}})
 	if _, _, limited := l.Reserve("slow.test"); !limited {
-		t.Fatal("domain match should be case-insensitive")
+		t.Fatal("key match should be case-insensitive")
 	}
 }

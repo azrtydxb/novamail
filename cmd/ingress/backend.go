@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"io"
 	"log/slog"
+	"net/textproto"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -81,15 +84,25 @@ func (s *session) Data(r io.Reader) error {
 	defer cancel()
 
 	id := newID()
-	if err := s.be.store.Put(ctx, id, r); err != nil {
+	// Tee the body into a capped header buffer + byte counter while storing it,
+	// so we can record subject/message-id/size without a second pass.
+	cap := &captureWriter{limit: 64 << 10}
+	if err := s.be.store.Put(ctx, id, io.TeeReader(r, cap)); err != nil {
 		rejected.Inc()
 		s.be.log.Error("persist body", "err", err, "from", s.from)
 		return err
 	}
+	meta := model.MessageMeta{SizeBytes: cap.n}
+	if tp := textproto.NewReader(bufio.NewReader(bytes.NewReader(cap.hdr.Bytes()))); tp != nil {
+		if mh, herr := tp.ReadMIMEHeader(); herr == nil || mh != nil {
+			meta.Subject = mh.Get("Subject")
+			meta.MessageID = mh.Get("Message-Id")
+		}
+	}
 
 	env := model.Envelope{MailFrom: s.from, RcptTo: append([]string(nil), s.rcpts...)}
 	bodyRef := model.BodyRef{Backend: "fs", Key: id}
-	if err := s.be.db.InsertMessage(ctx, id, env, bodyRef); err != nil {
+	if err := s.be.db.InsertMessage(ctx, id, env, bodyRef, meta); err != nil {
 		rejected.Inc()
 		s.be.log.Error("insert message", "err", err, "id", id)
 		return err
@@ -123,6 +136,26 @@ func (s *session) Reset() {
 }
 
 func (s *session) Logout() error { return nil }
+
+// captureWriter counts every byte written and keeps the first `limit` bytes
+// (the header block) for parsing subject/message-id.
+type captureWriter struct {
+	hdr   bytes.Buffer
+	n     int64
+	limit int
+}
+
+func (c *captureWriter) Write(p []byte) (int, error) {
+	c.n += int64(len(p))
+	if rem := c.limit - c.hdr.Len(); rem > 0 {
+		if len(p) <= rem {
+			c.hdr.Write(p)
+		} else {
+			c.hdr.Write(p[:rem])
+		}
+	}
+	return len(p), nil
+}
 
 // domainOf returns the domain of the first address, lowercased.
 func domainOf(addrs []string) string {

@@ -18,7 +18,8 @@ const RESOURCES: Record<string, Resource> = {
   providers: { table: "providers", slice: "providers", pk: "id", cols: ["name", "type", "endpoint", "auth_mode", "enabled", "secret_ref"] },
   "routing-rules": { table: "routing_rules", slice: "routing_rules", pk: "id", cols: ["recipient_domain", "sender_domain", "provider_chain", "priority", "enabled"] },
   "relay-domains": { table: "relay_domains", slice: "relay_domains", pk: "domain", cols: ["domain", "enabled"] },
-  "rate-limits": { table: "rate_limits", slice: "rate_limits", pk: "domain", cols: ["domain", "per_second", "burst", "enabled"] },
+  "rate-limits": { table: "rate_limits", slice: "rate_limits", pk: "id", cols: ["direction", "scope", "scope_value", "per_second", "burst", "enabled"] },
+  "relay-clients": { table: "relay_clients", slice: "relay_clients", pk: "id", cols: ["cidr", "description", "allowed_sender_domains", "enabled"] },
   "dkim-keys": { table: "dkim_keys", slice: "dkim_keys", pk: "id", cols: ["domain", "selector", "private_ref", "public_key", "rotation"] },
   "tls-policy": { table: "tls_policy", slice: "tls_policy", pk: "id", cols: ["min_version", "starttls_required", "provider_id"] },
 };
@@ -172,7 +173,7 @@ export function registerRoutes(app: FastifyInstance): void {
     if (q.q) { params.push(`%${q.q}%`); where.push(`(mail_from ILIKE $${params.length} OR array_to_string(rcpt_to,',') ILIKE $${params.length})`); }
     params.push(Math.min(Number(q.limit) || 100, 500));
     const { rows } = await pool.query(
-      `SELECT id, mail_from, rcpt_to, status, attempts, created_at, updated_at FROM messages
+      `SELECT id, mail_from, rcpt_to, status, attempts, subject, size_bytes, created_at, updated_at FROM messages
        ${where.length ? "WHERE " + where.join(" AND ") : ""}
        ORDER BY created_at DESC LIMIT $${params.length}`,
       params,

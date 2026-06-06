@@ -128,7 +128,8 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 	}
 	env := model.Envelope{MailFrom: "", RcptTo: []string{job.Envelope.MailFrom}}
 	bodyRef := model.BodyRef{Backend: "fs", Key: dsnID}
-	if err := g.db.InsertMessage(hctx, dsnID, env, bodyRef); err != nil {
+	meta := model.MessageMeta{Subject: "Delivery Status Notification (Failure)", SizeBytes: int64(len(body))}
+	if err := g.db.InsertMessage(hctx, dsnID, env, bodyRef, meta); err != nil {
 		g.log.Error("insert dsn message", "err", err)
 		_ = d.Nack(false, true)
 		return
@@ -147,6 +148,8 @@ func (g *gen) handle(ctx context.Context, d amqp091.Delivery) {
 		_ = d.Nack(false, true)
 		return
 	}
+	// GC: the original message is terminal (bounced); drop its body.
+	_ = g.store.Delete(hctx, job.BodyRef.Key)
 	g.log.Info("bounce generated", "original", job.MessageID, "dsn", dsnID, "to", job.Envelope.MailFrom)
 	_ = d.Ack(false)
 }

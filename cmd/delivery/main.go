@@ -246,6 +246,8 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 		if res.Outcome == providers.Delivered {
 			relayed.Inc()
 			_ = w.db.RecordAttempt(hctx, job.MessageID, model.StatusRelayed, "relayed", p.Name(), res.Detail)
+			// GC: relayed successfully, the body is no longer needed.
+			_ = w.store.Delete(hctx, job.BodyRef.Key)
 			_ = d.Ack(false)
 			w.log.Info("relayed", "id", job.MessageID, "provider", p.Name())
 			return
@@ -323,6 +325,13 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 	if err != nil {
 		logger.Error("load rate limits", "err", err)
 	}
+	// Outbound, per-recipient-domain limits (provider-scoped limits arrive in PR-C).
+	var domainSpecs []ratelimit.Spec
+	for _, rl := range limits {
+		if rl.Direction == "out" && rl.Scope == "recipient_domain" {
+			domainSpecs = append(domainSpecs, ratelimit.Spec{Key: rl.ScopeValue, PerSecond: rl.PerSecond, Burst: rl.Burst})
+		}
+	}
 	instances := make(map[string]providers.Provider, len(provs))
 	for _, p := range provs {
 		inst, err := providers.New(p, resolveCreds(ctx, database, cipher, secretDir, p.SecretRef))
@@ -332,11 +341,11 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 		}
 		instances[p.ID] = inst
 	}
-	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules), "rateLimitDomains", len(limits))
+	logger.Info("routing loaded", "providers", len(instances), "rules", len(rules), "rateLimitSpecs", len(domainSpecs))
 	return &routeState{
 		engine:    routing.Build(rules),
 		instances: instances,
-		limiter:   ratelimit.Build(limits),
+		limiter:   ratelimit.Build(domainSpecs),
 	}
 }
 
