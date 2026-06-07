@@ -183,20 +183,28 @@ func (c *Conn) reestablish() {
 	}
 }
 
-// startConsumer opens the AMQP consume on the current channel and forwards each
-// delivery to the consumer's stable out channel until the channel closes.
+// startConsumer opens a DEDICATED channel for the consumer (QoS is channel-scoped,
+// so sharing one channel across consumers with different prefetch would let them
+// clobber each other) and forwards each delivery to the consumer's stable out
+// channel until the channel closes.
 func (c *Conn) startConsumer(cs *consumer) error {
 	c.mu.RLock()
-	ch := c.ch
+	conn := c.conn
 	c.mu.RUnlock()
-	if ch == nil {
-		return fmt.Errorf("no channel")
+	if conn == nil {
+		return fmt.Errorf("no connection")
+	}
+	ch, err := conn.Channel()
+	if err != nil {
+		return fmt.Errorf("consumer channel: %w", err)
 	}
 	if err := ch.Qos(cs.prefetch, 0, false); err != nil {
+		_ = ch.Close()
 		return fmt.Errorf("qos: %w", err)
 	}
 	d, err := ch.Consume(cs.queue, "", false, false, false, false, nil)
 	if err != nil {
+		_ = ch.Close()
 		return fmt.Errorf("consume %s: %w", cs.queue, err)
 	}
 	go func() {
@@ -252,6 +260,11 @@ func declare(ch *amqp.Channel) error {
 	if err := ch.ExchangeDeclare(WorkExchange, "topic", true, false, false, false, nil); err != nil {
 		return fmt.Errorf("declare exchange: %w", err)
 	}
+	// Declare the config fanout here too so a publisher that fires immediately
+	// after a reconnect (before any subscriber recreates it) doesn't hit NOT_FOUND.
+	if err := ch.ExchangeDeclare(ConfigExchange, "fanout", true, false, false, false, nil); err != nil {
+		return fmt.Errorf("declare config exchange: %w", err)
+	}
 	if _, err := ch.QueueDeclare(WorkQueue, true, false, false, false, amqp.Table{
 		"x-queue-type": "quorum",
 	}); err != nil {
@@ -289,7 +302,7 @@ func declare(ch *amqp.Channel) error {
 // tries again, until ctx expires or the retry budget is exhausted.
 func (c *Conn) publish(ctx context.Context, exchange, key string, pub amqp.Publishing) error {
 	var lastErr error
-	for attempt := 0; attempt < 6; attempt++ {
+	for {
 		c.mu.RLock()
 		ch := c.ch
 		c.mu.RUnlock()
@@ -300,16 +313,18 @@ func (c *Conn) publish(ctx context.Context, exchange, key string, pub amqp.Publi
 				lastErr = err
 			}
 		}
+		// Retry until the caller's context expires (callers pass a per-message
+		// deadline), so a publish survives a broker restart rather than failing
+		// after a fixed budget and leaving a body persisted but never enqueued.
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(500 * time.Millisecond): // give the supervisor time to reconnect
+			if lastErr == nil {
+				lastErr = ctx.Err()
+			}
+			return fmt.Errorf("publish to %q: %w", exchange+"/"+key, lastErr)
+		case <-time.After(500 * time.Millisecond): // wait for the supervisor to reconnect
 		}
 	}
-	if lastErr == nil {
-		lastErr = fmt.Errorf("amqp channel unavailable")
-	}
-	return fmt.Errorf("publish to %q: %w", exchange+"/"+key, lastErr)
 }
 
 func jobPublishing(job *model.RelayJob) (amqp.Publishing, error) {
@@ -361,31 +376,31 @@ func (c *Conn) ConsumeQueue(queue string, prefetch int) (<-chan amqp.Delivery, e
 
 // Consume returns a delivery channel for the work queue with manual acks.
 // prefetch bounds in-flight messages per consumer (QoS). The channel survives
-// broker reconnects (it is never closed until Close), so the consumer loop does
-// not need to exit and re-subscribe on a RabbitMQ restart.
+// broker reconnects (it stays open across reconnects so the consumer loop does
+// not exit on a RabbitMQ restart). Shut the consumer down via its context, not by
+// waiting for the channel to close — Close() tears down the connection but does
+// not close these out channels (closing them could panic concurrent forwarders).
 func (c *Conn) Consume(prefetch int) (<-chan amqp.Delivery, error) {
 	return c.registerConsumer(WorkQueue, prefetch)
 }
 
 func (c *Conn) registerConsumer(queue string, prefetch int) (<-chan amqp.Delivery, error) {
 	cs := &consumer{queue: queue, prefetch: prefetch, out: make(chan amqp.Delivery, prefetch)}
-	c.regMu.Lock()
-	c.consumers = append(c.consumers, cs)
-	c.regMu.Unlock()
+	// Register only after a successful start, so a failed subscription isn't left
+	// in the registry to be silently re-established later behind the caller's back.
 	if err := c.startConsumer(cs); err != nil {
 		return nil, err
 	}
+	c.regMu.Lock()
+	c.consumers = append(c.consumers, cs)
+	c.regMu.Unlock()
 	return cs.out, nil
 }
 
-// PublishConfig publishes a config.changed event to the fanout exchange.
+// PublishConfig publishes a config.changed event to the fanout exchange. The
+// exchange is declared by declare() on every (re)connect, so no per-publish
+// declare (whose error we'd have to swallow) is needed here.
 func (c *Conn) PublishConfig(ctx context.Context, body []byte) error {
-	c.mu.RLock()
-	ch := c.ch
-	c.mu.RUnlock()
-	if ch != nil {
-		_ = ch.ExchangeDeclare(ConfigExchange, "fanout", true, false, false, false, nil)
-	}
 	return c.publish(ctx, ConfigExchange, "", amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Transient,
