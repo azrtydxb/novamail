@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
 import { pool } from "./db.js";
+import { dispatchAlerts } from "./alerts.js";
 
 // Deliverability checks (Phase 1): resolve and grade a relay domain's email-auth
 // DNS — SPF, DKIM, DMARC — and return the exact record to publish for each issue.
@@ -447,16 +448,21 @@ async function getAllReports(): Promise<DomainReport[]> {
   });
 }
 
-// refreshAll re-checks every relay domain and persists — the periodic job.
+// refreshAll re-checks every relay domain, persists, then runs alert dispatch on
+// the fresh results — the periodic job. (On-demand checks never alert.)
 async function refreshAll(log: { error: (o: unknown, m?: string) => void }): Promise<void> {
   const { rows } = await pool.query<{ domain: string }>("select domain from relay_domains");
-  await mapLimit(rows, 4, async (d) => {
+  const reports = await mapLimit(rows, 4, async (d) => {
     try {
-      await persistCheck(await checkDomain(d.domain));
+      const rep = await checkDomain(d.domain);
+      await persistCheck(rep);
+      return rep;
     } catch (err) {
       log.error({ err, domain: d.domain }, "deliverability refresh failed");
+      return null;
     }
   });
+  await dispatchAlerts(reports.filter((r): r is DomainReport => r !== null), log);
 }
 
 export function registerDeliverability(app: FastifyInstance): void {
