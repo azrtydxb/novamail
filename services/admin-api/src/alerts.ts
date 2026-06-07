@@ -28,7 +28,18 @@ type Logger = { error: (o: unknown, m?: string) => void };
 
 // ── SSRF-guarded webhook POST ─────────────────────────────────────────────────
 
-function isPrivateAddr(ip: string): boolean {
+// validWebhookURL fully parses the URL (not just a regex prefix) and requires
+// http(s), so an unparseable value like "http://" can't be stored.
+export function validWebhookURL(url: string): boolean {
+  try {
+    const u = new URL(url);
+    return (u.protocol === "https:" || u.protocol === "http:") && !!u.hostname;
+  } catch {
+    return false;
+  }
+}
+
+export function isPrivateAddr(ip: string): boolean {
   if (netIsIP(ip) === 4) {
     const o = ip.split(".").map(Number);
     if (o[0] === 0 || o[0] === 10 || o[0] === 127) return true;
@@ -172,7 +183,7 @@ async function loadChannels(): Promise<Channel[]> {
   return rows;
 }
 
-function shouldSend(ch: Channel, event: "regression" | "recovery", status: CheckStatus): boolean {
+export function shouldSend(ch: { min_severity: string }, event: "regression" | "recovery", status: CheckStatus): boolean {
   if (event === "recovery") return true;
   return (SEVERITY[status] ?? 0) >= (SEVERITY[ch.min_severity] ?? 1);
 }
@@ -184,7 +195,13 @@ async function send(ch: Channel, event: "regression" | "recovery", rep: DomainRe
     return injectEmail(ch.target.split(",").map((s) => s.trim()).filter(Boolean), subject, text);
   }
   if (!ch.secret) return { ok: false, detail: "no webhook URL" };
-  return postWebhook(decrypt(ch.secret), webhookPayload(event, rep, was));
+  let url: string;
+  try {
+    url = decrypt(ch.secret);
+  } catch {
+    return { ok: false, detail: "webhook secret unreadable (corrupt or key mismatch)" };
+  }
+  return postWebhook(url, webhookPayload(event, rep, was));
 }
 
 // dispatchAlerts is called by the periodic checker after a refresh — never on an
@@ -235,7 +252,7 @@ export function registerAlerts(app: FastifyInstance): void {
     if (!b.name) return reply.code(400).send({ error: "name required" });
     const sev = b.min_severity === "error" ? "error" : "warning";
     if (type === "webhook") {
-      if (!b.url || !/^https?:\/\//i.test(b.url)) return reply.code(400).send({ error: "valid http(s) webhook url required" });
+      if (!b.url || !validWebhookURL(b.url)) return reply.code(400).send({ error: "valid http(s) webhook url required" });
       const { rows } = await pool.query("insert into alert_channels (name, type, secret, min_severity) values ($1,'webhook',$2,$3) returning id, name, type, min_severity, enabled", [b.name, encrypt(b.url), sev]);
       return reply.code(201).send(rows[0]);
     }
@@ -254,7 +271,7 @@ export function registerAlerts(app: FastifyInstance): void {
     if (b.enabled !== undefined) { vals.push(b.enabled); sets.push(`enabled=$${vals.length}`); }
     if (b.target !== undefined) { vals.push(b.target); sets.push(`target=$${vals.length}`); }
     if (b.url) {
-      if (!/^https?:\/\//i.test(b.url)) return reply.code(400).send({ error: "url must be http(s)" });
+      if (!validWebhookURL(b.url)) return reply.code(400).send({ error: "url must be http(s)" });
       vals.push(encrypt(b.url)); sets.push(`secret=$${vals.length}`);
     }
     if (sets.length === 0) return reply.code(400).send({ error: "no writable fields" });
