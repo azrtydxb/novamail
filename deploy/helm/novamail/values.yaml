@@ -219,3 +219,9 @@ amqpmtls:
   caSecret: nova-bus-ca            # CA that signs the broker + client certs
   clientSecret: novamail-amqp-client
   mountPath: /etc/novamail/amqptls
+
+# Distributed tracing: export OTLP/gRPC to the cluster Jaeger so a message's
+# spans link ingress -> delivery (with per-phase timing) end to end.
+tracing:
+  enabled: true
+  otlpEndpoint: "jaeger.observability:4317"

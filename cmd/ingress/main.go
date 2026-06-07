@@ -29,6 +29,7 @@ import (
 	"github.com/azrtydxb/novamail/internal/amqp"
 	"github.com/azrtydxb/novamail/internal/db"
 	"github.com/azrtydxb/novamail/internal/store"
+	"github.com/azrtydxb/novamail/internal/tracing"
 )
 
 // config is the bootstrap config (env/flags only; operational config is in
@@ -106,7 +107,10 @@ func main() {
 	}
 	defer func() { _ = bus.Close() }()
 
-	be := &backend{store: bodies, db: database, bus: bus, log: logger}
+	shutdownTracing, tracer := tracing.Init(initCtx, "novamail-ingress", logger)
+	defer func() { _ = shutdownTracing(context.Background()) }()
+
+	be := &backend{store: bodies, db: database, bus: bus, log: logger, tracer: tracer}
 	be.policy.Store(buildInbound(initCtx, database, logger))
 	// Hot-reload the inbound authorization policy on config.changed.
 	if err := bus.SubscribeConfig(func(_ []byte) {

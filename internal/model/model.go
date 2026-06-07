@@ -49,6 +49,9 @@ type RelayJob struct {
 	// NOTIFY=NEVER for all recipients; DSNReturn is RET=FULL|HDRS.
 	DSNReturn   string `json:"dsnReturn,omitempty"`
 	DSNSuppress bool   `json:"dsnSuppress,omitempty"`
+	// Trace carries the W3C trace context (traceparent/tracestate) so a message's
+	// spans link ingress → delivery across the bus + retry tiers. Optional.
+	Trace map[string]string `json:"trace,omitempty"`
 }
 
 // RelayJobVersion is the current schema version.
