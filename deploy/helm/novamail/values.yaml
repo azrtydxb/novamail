@@ -122,6 +122,9 @@ delivery:
     messagesPerReplica: 50   # target backlog per delivery replica
     pollingInterval: 15
     cooldownPeriod: 300
+    # KEDA reads queue depth over the management TLS endpoint; the broker's cert
+    # is self-signed, so verification is skipped (read-only, in-cluster probe).
+    unsafeSsl: true
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 500m, memory: 256Mi }

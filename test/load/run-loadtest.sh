@@ -19,6 +19,7 @@ kc() { kubectl -n "$NS" "$@"; }
 
 PGPOD="$(kc get pods -l cnpg.io/cluster=novamail-pg -o jsonpath='{.items[0].metadata.name}')"
 RMQPOD="$(kc get pods -l app.kubernetes.io/name=nova-bus -o jsonpath='{.items[0].metadata.name}')"
+[ -n "$PGPOD" ] && [ -n "$RMQPOD" ] || { echo "ERROR: could not find Postgres/RabbitMQ pods in $NS"; exit 1; }
 
 relayed_count() { kc exec "$PGPOD" -- psql -U postgres -d novamail -tAc \
   "select count(*) from messages where status='relayed'" 2>/dev/null | tr -d '[:space:]'; }

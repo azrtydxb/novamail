@@ -9,7 +9,7 @@ only, and KEDA's AMQP scaler doesn't load a custom CA cleanly, so we use the
 management endpoint with unsafeSsl (TLS-encrypted; the self-signed cert is not
 verified — acceptable for an in-cluster, read-only queue-length probe). The
 management URL (with the operator's generated credentials) lives in the
-novamail-rabbitmq-keda secret — create it with deps/gen-keda-secret.sh.
+novamail-rabbitmq-keda secret — create it with deploy/cluster/deps/gen-keda-secret.sh.
 */}}
 apiVersion: keda.sh/v1alpha1
 kind: TriggerAuthentication
@@ -49,7 +49,7 @@ spec:
         mode: QueueLength
         value: {{ .Values.delivery.keda.messagesPerReplica | quote }}
         vhostName: "/"
-        unsafeSsl: "true"
+        unsafeSsl: {{ .Values.delivery.keda.unsafeSsl | default true | quote }}
       authenticationRef:
         name: {{ include "novamail.fullname" . }}-rabbitmq
 {{- end }}
