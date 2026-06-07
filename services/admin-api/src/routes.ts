@@ -85,9 +85,16 @@ export function registerRoutes(app: FastifyInstance): void {
   const deliveryURL = process.env.NOVAMAIL_DELIVERY_URL || "http://novamail-delivery:8080";
   app.post("/api/providers/:id/test", async (req, reply) => {
     const id = (req.params as { id: string }).id;
+    const internalAuth = process.env.NOVAMAIL_ADMIN_API_KEY;
+    if (!internalAuth) {
+      return reply.code(503).send({ ok: false, error: "provider testing not configured (NOVAMAIL_ADMIN_API_KEY unset)" });
+    }
     try {
       const res = await fetch(`${deliveryURL}/test/${encodeURIComponent(id)}`, {
         method: "GET",
+        // Shared-secret auth for the delivery /test endpoint (it triggers outbound
+        // SMTP dials and must not be open to the cluster).
+        headers: { "X-Internal-Auth": internalAuth },
         signal: AbortSignal.timeout(20000),
       });
       const body = (await res.json()) as { ok?: boolean };

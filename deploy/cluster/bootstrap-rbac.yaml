@@ -15,15 +15,17 @@ rules:
   - apiGroups: [""]
     resources: [services, persistentvolumeclaims, configmaps, serviceaccounts, pods, events, endpoints]
     verbs: ["*"]
-  # Least privilege: Helm release state now lives in ConfigMaps
-  # (HELM_DRIVER=configmap), so the deployer only needs to READ Secrets (the e2e
-  # smoke reads the PG password). A compromised runner can't exfiltrate/rotate
-  # app credentials or the KEK. NOTE: apply this only AFTER the first
-  # configmap-driver deploy succeeds, else an in-flight secrets-driver deploy
-  # can't write its release Secret.
+  # Least privilege: Helm release state lives in ConfigMaps
+  # (HELM_DRIVER=configmap), so the deployer needs to read exactly one Secret —
+  # the PG password the e2e smoke uses (`get` by name, no list/watch) — and
+  # nothing else. A compromised runner therefore can't enumerate or read the KEK
+  # or provider credentials. NOTE: apply only AFTER the first configmap-driver
+  # deploy succeeds, else an in-flight secrets-driver deploy can't write its
+  # release Secret. Add resourceNames here if the pipeline ever needs another.
   - apiGroups: [""]
     resources: [secrets]
-    verbs: ["get", "list", "watch"]
+    resourceNames: [novamail-pg-app]
+    verbs: ["get"]
   # pods/exec + pods/log: the post-deploy relay smoke (test/e2e) submits from an
   # ephemeral pod and verifies the message status via psql exec.
   - apiGroups: [""]
