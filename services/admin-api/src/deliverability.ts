@@ -377,30 +377,146 @@ export async function checkDomain(domain: string): Promise<DomainReport> {
   return { domain, checkedAt: new Date().toISOString(), status: rollup(records), records };
 }
 
+// ── Persistence + scheduler (Phase 3) ─────────────────────────────────────────
+
+// persistCheck replaces a domain's cached per-record state and appends a rollup
+// history row, in one transaction.
+async function persistCheck(report: DomainReport): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query("DELETE FROM domain_dns_checks WHERE domain = $1", [report.domain]);
+    for (const r of report.records) {
+      await client.query(
+        `INSERT INTO domain_dns_checks (domain,record,selector,status,found,expected,detail,fix,checked_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [report.domain, r.record, r.selector ?? "", r.status, r.found, r.expected ?? null, r.detail, r.fix ?? null, report.checkedAt],
+      );
+    }
+    await client.query("INSERT INTO domain_dns_history (domain, status) VALUES ($1,$2)", [report.domain, report.status]);
+    await client.query("COMMIT");
+  } catch (e) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw e;
+  } finally {
+    client.release();
+  }
+}
+
+// readCachedMap rebuilds the latest persisted report per domain (empty Map if the
+// table is missing/empty — callers fall back to live checks).
+async function readCachedMap(): Promise<Map<string, DomainReport>> {
+  const map = new Map<string, DomainReport>();
+  const { rows } = await pool.query<{ domain: string; record: RecordReport["record"]; selector: string; status: CheckStatus; found: string | null; expected: string | null; detail: string | null; fix: string | null; checked_at: Date | string }>(
+    "select domain,record,selector,status,found,expected,detail,fix,checked_at from domain_dns_checks order by domain",
+  );
+  for (const r of rows) {
+    let rep = map.get(r.domain);
+    if (!rep) {
+      // checked_at may arrive as a Date or a string depending on the pg type
+      // parser config — normalise via new Date().
+      rep = { domain: r.domain, checkedAt: new Date(r.checked_at).toISOString(), status: "ok", records: [] };
+      map.set(r.domain, rep);
+    }
+    rep.records.push({ record: r.record, selector: r.selector || undefined, status: r.status, found: r.found, expected: r.expected ?? undefined, detail: r.detail ?? "", fix: r.fix ?? undefined });
+  }
+  for (const rep of map.values()) rep.status = rollup(rep.records);
+  return map;
+}
+
+// getAllReports returns cached results, live-filling + persisting any uncached
+// relay domain — so the first load self-populates and a missing migration
+// degrades to live checks instead of failing.
+async function getAllReports(): Promise<DomainReport[]> {
+  const { rows: domains } = await pool.query<{ domain: string }>("select domain from relay_domains order by domain");
+  let cached: Map<string, DomainReport>;
+  try {
+    cached = await readCachedMap();
+  } catch {
+    cached = new Map();
+  }
+  return mapLimit(domains, 6, async (d) => {
+    const c = cached.get(d.domain);
+    if (c) return c;
+    const live = await checkDomain(d.domain).catch((err): DomainReport => ({
+      domain: d.domain, checkedAt: new Date().toISOString(), status: "error",
+      records: [{ record: "spf", status: "error", found: null, detail: `check failed: ${String(err?.message ?? err)}` }],
+    }));
+    persistCheck(live).catch(() => {});
+    return live;
+  });
+}
+
+// refreshAll re-checks every relay domain and persists — the periodic job.
+async function refreshAll(log: { error: (o: unknown, m?: string) => void }): Promise<void> {
+  const { rows } = await pool.query<{ domain: string }>("select domain from relay_domains");
+  await mapLimit(rows, 4, async (d) => {
+    try {
+      await persistCheck(await checkDomain(d.domain));
+    } catch (err) {
+      log.error({ err, domain: d.domain }, "deliverability refresh failed");
+    }
+  });
+}
+
 export function registerDeliverability(app: FastifyInstance): void {
-  // All relay domains, live (Phase 3 turns this into a cached read). Bounded
-  // concurrency so a large domain list can't burst DNS.
-  app.get("/api/deliverability", async () => {
-    const { rows } = await pool.query<{ domain: string }>("select domain from relay_domains order by domain");
-    return mapLimit(rows, 8, (r) =>
-      checkDomain(r.domain).catch(
-        (err): DomainReport => ({
-          domain: r.domain,
-          checkedAt: new Date().toISOString(),
-          status: "error",
-          records: [{ record: "spf", status: "error", found: null, detail: `check failed: ${String(err?.message ?? err)}` }],
-        }),
-      ),
-    );
+  // Cached read of all relay domains (live-fills + persists any gaps).
+  app.get("/api/deliverability", async () => getAllReports());
+
+  // Lightweight summary for the dashboard tile.
+  app.get("/api/deliverability/summary", async () => {
+    const reports = await getAllReports();
+    const counts = { ok: 0, warning: 0, error: 0 };
+    let lastChecked: string | null = null;
+    for (const r of reports) {
+      counts[r.status === "error" ? "error" : r.status === "warning" ? "warning" : "ok"]++;
+      if (!lastChecked || r.checkedAt > lastChecked) lastChecked = r.checkedAt;
+    }
+    return { total: reports.length, ...counts, lastChecked };
   });
 
-  // Single domain, live — drives "Check now" + card expansion. Restricted to a
-  // configured relay domain so the endpoint can't be used to resolve arbitrary
-  // names.
+  // Force a fresh re-check of all domains, persist, return ("re-check all").
+  app.post("/api/deliverability/check", async () => {
+    await refreshAll(app.log);
+    return getAllReports();
+  });
+
+  // Force a fresh re-check of one domain ("Check now"). Restricted to a configured
+  // relay domain so it can't resolve arbitrary names.
+  app.post("/api/deliverability/:domain/check", async (req, reply) => {
+    const domain = (req.params as { domain: string }).domain;
+    const { rowCount } = await pool.query("select 1 from relay_domains where domain = $1", [domain]);
+    if (!rowCount) return reply.code(404).send({ error: "unknown relay domain" });
+    const report = await checkDomain(domain);
+    persistCheck(report).catch((err) => app.log.error({ err, domain }, "persist check failed"));
+    return report;
+  });
+
+  // Cached single-domain read (queries just this domain, not the whole table).
   app.get("/api/deliverability/:domain", async (req, reply) => {
     const domain = (req.params as { domain: string }).domain;
     const { rowCount } = await pool.query("select 1 from relay_domains where domain = $1", [domain]);
     if (!rowCount) return reply.code(404).send({ error: "unknown relay domain" });
+    try {
+      const { rows } = await pool.query<{ record: RecordReport["record"]; selector: string; status: CheckStatus; found: string | null; expected: string | null; detail: string | null; fix: string | null; checked_at: Date | string }>(
+        "select record,selector,status,found,expected,detail,fix,checked_at from domain_dns_checks where domain = $1",
+        [domain],
+      );
+      if (rows.length) {
+        const records: RecordReport[] = rows.map((r) => ({ record: r.record, selector: r.selector || undefined, status: r.status, found: r.found, expected: r.expected ?? undefined, detail: r.detail ?? "", fix: r.fix ?? undefined }));
+        return { domain, checkedAt: new Date(rows[0].checked_at).toISOString(), status: rollup(records), records } satisfies DomainReport;
+      }
+    } catch {
+      /* fall through to a live check if the cache table is unavailable */
+    }
     return checkDomain(domain);
   });
+
+  // Periodic background refresh keeps the cache fresh (+ history for regressions).
+  const parsed = Number(process.env.NOVAMAIL_DELIVERABILITY_INTERVAL_HOURS);
+  const hours = Number.isFinite(parsed) && parsed > 0 ? parsed : 6;
+  const ms = hours * 3_600_000;
+  setTimeout(() => refreshAll(app.log).catch(() => {}), 30_000).unref();
+  setInterval(() => refreshAll(app.log).catch(() => {}), ms).unref();
+  app.log.info({ intervalHours: hours }, "deliverability scheduler started");
 }
