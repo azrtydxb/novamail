@@ -17,7 +17,9 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -73,6 +75,15 @@ func env(k, def string) string {
 	return def
 }
 
+func envInt(k string, def int) int {
+	if v := os.Getenv(k); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return def
+}
+
 // tlsVersion maps a tls_policy.min_version string to a crypto/tls constant.
 // Unknown values fall back to TLS 1.2 and are logged (the column is free-form).
 func tlsVersion(s string, log *slog.Logger) uint16 {
@@ -89,6 +100,13 @@ func tlsVersion(s string, log *slog.Logger) uint16 {
 
 func main() {
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+
+	// Per-replica concurrency: how many messages a single delivery pod handles in
+	// parallel. Delivery is I/O-bound on the upstream send, so concurrency (not
+	// CPU) is what fills the pipeline. Size the per-provider warm-connection pool
+	// to match, so concurrent sends reuse connections instead of churning them.
+	concurrency := envInt("NOVAMAIL_DELIVERY_CONCURRENCY", 16)
+	providers.DefaultMaxIdleConns = concurrency
 
 	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer initCancel()
@@ -164,7 +182,10 @@ func main() {
 	// Health/metrics server.
 	go serveHealth(env("NOVAMAIL_HTTP_ADDR", ":8080"), database, bus, w, logger)
 
-	deliveries, err := bus.Consume(20)
+	// Prefetch matches concurrency so each parallel handler has a message to work
+	// (QoS still bounds unacked in-flight to `concurrency` per replica, which keeps
+	// the queue-depth signal KEDA scales on meaningful and work fairly distributed).
+	deliveries, err := bus.Consume(concurrency)
 	if err != nil {
 		logger.Error("consume", "err", err)
 		os.Exit(1)
@@ -172,24 +193,33 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	logger.Info("delivery worker started", "smarthost", os.Getenv("NOVAMAIL_SMARTHOST_ADDR"))
+	logger.Info("delivery worker started", "concurrency", concurrency, "smarthost", os.Getenv("NOVAMAIL_SMARTHOST_ADDR"))
 
-	// Graceful drain: stop accepting new work on signal, but let the message
-	// currently being handled finish (it runs on a background context bounded by
-	// its own per-message timeout). Anything unacked is redelivered.
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Info("draining; shutting down")
-			return
-		case d, ok := <-deliveries:
-			if !ok {
-				logger.Error("delivery channel closed")
-				return
+	// A bounded pool of handlers consumes the shared delivery channel in parallel.
+	// Acks are per-message and order-independent (quorum queues), so out-of-order
+	// completion is fine. Graceful drain: on signal each worker stops pulling new
+	// work but finishes its in-flight message (bounded by the per-message timeout);
+	// anything still unacked is redelivered to another consumer.
+	var wg sync.WaitGroup
+	for range concurrency {
+		wg.Go(func() {
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case d, ok := <-deliveries:
+					if !ok {
+						return
+					}
+					w.handle(context.Background(), d)
+				}
 			}
-			w.handle(context.Background(), d)
-		}
+		})
 	}
+	<-ctx.Done()
+	logger.Info("draining; waiting for in-flight handlers")
+	wg.Wait()
+	logger.Info("drained; shutting down")
 }
 
 // routeState is an immutable snapshot of the DB-driven config, swapped

@@ -13,10 +13,11 @@ import (
 	"github.com/emersion/go-smtp"
 )
 
-// defaultMaxIdle bounds how many warm connections a provider keeps per instance.
-// Delivery handles messages sequentially per replica today, so 1 is enough in
-// practice; the small headroom covers concurrent handling without unbounded fan-out.
-const defaultMaxIdle = 4
+// DefaultMaxIdleConns bounds how many warm connections a provider keeps per
+// instance when SMTPConfig.MaxIdleConns is unset. The delivery worker sets this
+// to its per-replica concurrency at boot so concurrent sends reuse warm
+// connections instead of churning them.
+var DefaultMaxIdleConns = 4
 
 // SMTPConfig configures the generic SMTP smarthost provider.
 type SMTPConfig struct {
@@ -28,7 +29,7 @@ type SMTPConfig struct {
 	HELO          string
 	Insecure      bool   // skip TLS verification (lab/self-signed upstreams)
 	MinTLSVersion uint16 // 0 ⇒ TLS 1.2 (tls_policy.min_version)
-	MaxIdleConns  int    // 0 ⇒ defaultMaxIdle
+	MaxIdleConns  int    // 0 ⇒ DefaultMaxIdleConns
 }
 
 // SMTPProvider relays through a generic authenticated SMTP smarthost. It keeps a
@@ -65,7 +66,7 @@ func (p *SMTPProvider) maxIdle() int {
 	if p.cfg.MaxIdleConns > 0 {
 		return p.cfg.MaxIdleConns
 	}
-	return defaultMaxIdle
+	return DefaultMaxIdleConns
 }
 
 // dialConn opens a TCP (or implicit-TLS) connection, applies STARTTLS when
