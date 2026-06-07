@@ -30,12 +30,16 @@ window.NM_DATA = NM_DATA;
 const bump = () => { try { window.bumpData ? window.bumpData() : window.dispatchEvent(new Event('nm:data')); } catch { /* */ } };
 
 // ---- mappers: API row -> prototype shape ----
-function mapProvider(p, vol) {
+const fmtWhen = (s) => { if (!s) return '—'; try { return new Date(s).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }); } catch { return '—'; } };
+function mapProvider(p, vol, health) {
+  const h = (health || {})[p.name];
+  // status from the most recent real attempt (healthy/degraded); idle if disabled or never used.
+  const status = !p.enabled ? 'idle' : (h ? h.status : 'idle');
   return {
     id: p.id, name: p.name, type: p.type, endpoint: p.endpoint || '',
     auth_mode: AUTH_FROM_DB[p.auth_mode] || (p.auth_mode || 'NONE').toUpperCase(),
     secret_ref: p.secret_ref || '—', enabled: p.enabled,
-    status: p.enabled ? 'healthy' : 'idle', sent24h: vol[p.name] || 0, lastUsed: '—',
+    status, sent24h: vol[p.name] || 0, lastUsed: h ? fmtWhen(h.lastUsed) : '—',
   };
 }
 function mapRule(r) {
@@ -45,12 +49,13 @@ function mapRule(r) {
     isDefault: !r.recipient_domain && !r.sender_domain, matched24h: 0,
   };
 }
-function mapDomain(d, dk) {
+function mapDomain(d, dk, domVol) {
   const k = dk.find((x) => x.domain === d.domain);
   return {
     domain: d.domain, dkim_selector: k ? k.selector : '—',
     dkim: k ? (k.rotation === 'active' ? 'active' : 'pending') : 'pending',
-    messages24h: 0, verified: !!k && k.rotation === 'active', enabled: d.enabled !== false,
+    messages24h: (domVol || {})[(d.domain || '').toLowerCase()] || 0,
+    verified: !!k && k.rotation === 'active', enabled: d.enabled !== false,
   };
 }
 function mapRate(r) {
@@ -105,9 +110,11 @@ async function loadAll() {
   try { queues = await api('/queues'); } catch { /* */ }
 
   const vol = (metrics && metrics.providerVolume) || {};
-  NM_DATA.PROVIDERS = providers.map((p) => mapProvider(p, vol));
+  const health = (metrics && metrics.providerHealth) || {};
+  const domVol = (metrics && metrics.domainVolume) || {};
+  NM_DATA.PROVIDERS = providers.map((p) => mapProvider(p, vol, health));
   NM_DATA.ROUTING_RULES = rules.map(mapRule);
-  NM_DATA.RELAY_DOMAINS = domains.map((d) => mapDomain(d, dkim));
+  NM_DATA.RELAY_DOMAINS = domains.map((d) => mapDomain(d, dkim, domVol));
   NM_DATA.RATE_LIMITS = rates.map(mapRate);
   NM_DATA.ACCOUNTS = accounts.map(mapAccount);
   NM_DATA.MESSAGES = messages;
@@ -197,7 +204,8 @@ async function refreshLight() {
       NM_DATA.SERIES = { ...NM_DATA.SERIES, ...metrics.series };
       if (metrics.server) NM_DATA.SERVER = metrics.server;
       const vol = metrics.providerVolume || {};
-      NM_DATA.PROVIDERS = NM_DATA.PROVIDERS.map((p) => ({ ...p, sent24h: vol[p.name] || p.sent24h }));
+      const health = metrics.providerHealth || {};
+      NM_DATA.PROVIDERS = NM_DATA.PROVIDERS.map((p) => ({ ...p, sent24h: vol[p.name] || p.sent24h, status: !p.enabled ? 'idle' : (health[p.name] ? health[p.name].status : p.status), lastUsed: health[p.name] ? fmtWhen(health[p.name].lastUsed) : p.lastUsed }));
     }
     if (list) {
       // merge new list rows, preserving already-loaded event timelines

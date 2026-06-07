@@ -79,6 +79,27 @@ export async function getMetrics() {
   const providerVolume: Record<string, number> = {};
   for (const r of pv.rows) providerVolume[r.provider] = Number(r.n);
 
+  // provider health + last-used: the most recent attempt per provider
+  // (relayed ⇒ healthy, otherwise degraded). Real, not the enabled flag.
+  const ph = await pool.query<{ provider: string; last: string; kind: string }>(
+    `SELECT DISTINCT ON (provider) provider, at AS last, kind
+       FROM message_events WHERE provider IS NOT NULL AND provider <> ''
+       ORDER BY provider, at DESC`,
+  );
+  const providerHealth: Record<string, { lastUsed: string; status: string }> = {};
+  for (const r of ph.rows) {
+    providerHealth[r.provider] = { lastUsed: r.last, status: r.kind === "relayed" ? "healthy" : "degraded" };
+  }
+
+  // per-sender-domain message volume (24h), derived from MAIL FROM.
+  const dv = await pool.query<{ d: string; n: string }>(
+    `SELECT lower(split_part(mail_from,'@',2)) d, count(*) n
+       FROM messages WHERE created_at > now() - interval '24 hours' AND mail_from <> ''
+       GROUP BY d`,
+  );
+  const domainVolume: Record<string, number> = {};
+  for (const r of dv.rows) domainVolume[r.d] = Number(r.n);
+
   // queue depth + cluster nodes from RabbitMQ management
   const queues = await getQueues();
   const queueDepth = queues.reduce((a, q) => a + q.depth, 0);
@@ -100,6 +121,8 @@ export async function getMetrics() {
     },
     series: S,
     providerVolume,
+    providerHealth,
+    domainVolume,
     server,
   };
 }
