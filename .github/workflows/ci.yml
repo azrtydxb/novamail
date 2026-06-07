@@ -147,3 +147,9 @@ jobs:
           kubectl -n novamail rollout status deploy/novamail-dsn --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-admin-api --timeout=120s
           kubectl -n novamail rollout status deploy/novamail-web --timeout=120s
+      - name: Post-deploy relay smoke (e2e)
+        run: |
+          chmod +x test/e2e/relay-smoke.sh
+          set +e; NS=novamail test/e2e/relay-smoke.sh; code=$?; set -e
+          if [ "$code" = "2" ]; then echo "::warning::relay smoke skipped (prereqs absent)"; exit 0; fi
+          exit $code
