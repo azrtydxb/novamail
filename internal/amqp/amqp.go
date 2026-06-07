@@ -5,8 +5,12 @@ package amqp
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -59,9 +63,11 @@ type Conn struct {
 	ch   *amqp.Channel
 }
 
-// Dial connects and declares the relay topology (idempotent).
+// Dial connects and declares the relay topology (idempotent). For an amqps://
+// URL it builds a TLS config from the mounted CA (+ client cert for mutual TLS)
+// so the bus connection is verified and client-authenticated.
 func Dial(url string) (*Conn, error) {
-	conn, err := amqp.Dial(url)
+	conn, err := dialBus(url)
 	if err != nil {
 		return nil, fmt.Errorf("amqp dial: %w", err)
 	}
@@ -75,6 +81,46 @@ func Dial(url string) (*Conn, error) {
 		return nil, err
 	}
 	return &Conn{conn: conn, ch: ch}, nil
+}
+
+// dialBus dials plaintext amqp:// directly; for amqps:// it loads a TLS config
+// from the mounted CA + (optional) client cert. Falls back to system roots if no
+// CA is mounted.
+func dialBus(url string) (*amqp.Connection, error) {
+	if !strings.HasPrefix(url, "amqps://") {
+		return amqp.Dial(url)
+	}
+	if tcfg := busTLS(); tcfg != nil {
+		return amqp.DialTLS(url, tcfg)
+	}
+	return amqp.Dial(url)
+}
+
+// busTLS builds the bus TLS config from files under NOVAMAIL_AMQP_TLS_DIR
+// (default /etc/novamail/amqptls): ca.crt to verify the broker, and tls.crt/
+// tls.key to present a client cert (mutual TLS). Returns nil if no CA is mounted.
+func busTLS() *tls.Config {
+	dir := os.Getenv("NOVAMAIL_AMQP_TLS_DIR")
+	if dir == "" {
+		dir = "/etc/novamail/amqptls"
+	}
+	caPEM, err := os.ReadFile(dir + "/ca.crt")
+	if err != nil {
+		return nil
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(caPEM) {
+		return nil
+	}
+	server := os.Getenv("NOVAMAIL_AMQP_SERVERNAME")
+	if server == "" {
+		server = "nova-bus"
+	}
+	cfg := &tls.Config{RootCAs: pool, ServerName: server, MinVersion: tls.VersionTLS12}
+	if cert, err := tls.LoadX509KeyPair(dir+"/tls.crt", dir+"/tls.key"); err == nil {
+		cfg.Certificates = []tls.Certificate{cert} // mutual TLS
+	}
+	return cfg
 }
 
 func declare(ch *amqp.Channel) error {

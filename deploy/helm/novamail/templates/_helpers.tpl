@@ -110,3 +110,30 @@ app.kubernetes.io/component: web
             - { key: tls.key, path: tls.key }
 {{- end }}
 {{- end -}}
+
+{{/* RabbitMQ mTLS client material (CA + client cert) for amqps + client auth */}}
+{{- define "novamail.amqptls.volumeMount" -}}
+{{- if .Values.amqpmtls.enabled }}
+- name: amqptls
+  mountPath: {{ .Values.amqpmtls.mountPath }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "novamail.amqptls.volume" -}}
+{{- if .Values.amqpmtls.enabled }}
+- name: amqptls
+  projected:
+    defaultMode: 0644
+    sources:
+      - secret:
+          name: {{ .Values.amqpmtls.caSecret }}
+          items:
+            - { key: ca.crt, path: ca.crt }
+      - secret:
+          name: {{ .Values.amqpmtls.clientSecret }}
+          items:
+            - { key: tls.crt, path: tls.crt }
+            - { key: tls.key, path: tls.key }
+{{- end }}
+{{- end -}}

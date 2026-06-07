@@ -77,3 +77,23 @@ pods mount the cert (else live connections break):
 kubectl -n novamail patch cluster novamail-pg --type merge -p \
   '{"spec":{"postgresql":{"pg_hba":["hostssl all all all scram-sha-256 clientcert=verify-ca"]}}}'
 ```
+
+
+## RabbitMQ mutual TLS
+
+Provision the bus CA + server/client certs, then point the operator at them:
+
+```sh
+./deps/gen-amqp-certs.sh novamail
+kubectl -n novamail apply -f deps/rabbitmq-cluster.yaml   # adds spec.tls (AMQPS on 5671)
+```
+
+The chart mounts the CA + `novamail-amqp-client` at `/etc/novamail/amqptls`. Activate by flipping AMQP_URL to amqps (port 5671) — services then dial with the client cert (mutual TLS):
+
+```sh
+kubectl -n novamail patch secret novamail-rabbitmq --type merge \
+  -p "{\"data\":{\"AMQP_URL\":\"$(printf 'amqps://USER:PASS@nova-bus:5671/' | base64)\"}}"
+kubectl -n novamail rollout restart deploy/novamail-ingress deploy/novamail-delivery deploy/novamail-dsn deploy/novamail-admin-api
+```
+
+Once every client uses amqps, set `disableNonTLSListeners: true` to close 5672.

@@ -11,6 +11,14 @@ metadata:
 spec:
   replicas: 3
   image: rabbitmq:4-management
+  # Mutual TLS: serve AMQPS (5671) with the server cert + verify client certs
+  # against the CA. Run ./deps/gen-amqp-certs.sh first to create these secrets.
+  # The plaintext 5672 listener stays up for the cutover; flip
+  # disableNonTLSListeners to true once every client uses amqps.
+  tls:
+    secretName: nova-bus-server-tls
+    caSecretName: nova-bus-ca
+    disableNonTLSListeners: false
   persistence:
     storageClassName: longhorn
     storage: 5Gi
