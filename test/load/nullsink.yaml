@@ -62,12 +62,20 @@ spec:
     metadata:
       labels: { app: novamail-nullsink }
     spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        seccompProfile: { type: RuntimeDefault }
       containers:
         - name: sink
           image: python:3.12-alpine
           command: ["python3", "/app/sink.py"]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
           ports:
-            - containerPort: 1025
+            - { name: smtp, containerPort: 1025 }
           volumeMounts:
             - { name: src, mountPath: /app }
           resources:
@@ -85,4 +93,4 @@ metadata:
 spec:
   selector: { app: novamail-nullsink }
   ports:
-    - { port: 1025, targetPort: 1025 }
+    - { name: smtp, port: 1025, targetPort: 1025 }
