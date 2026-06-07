@@ -99,7 +99,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	bus, err := amqp.Dial(cfg.amqpURL)
+	bus, err := amqp.Dial(cfg.amqpURL, logger)
 	if err != nil {
 		logger.Error("init rabbitmq", "err", err)
 		os.Exit(1)

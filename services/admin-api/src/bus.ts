@@ -6,6 +6,7 @@ const CONFIG_EXCHANGE = "config.changed";
 const WORK_EXCHANGE = "relay.work";
 
 let chan: amqp.Channel | null = null;
+let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
 
 // busTLS builds amqplib socket options for amqps:// from the mounted CA (+ client
 // cert for mutual TLS). Returns undefined for plaintext amqp:// or no CA.
@@ -23,14 +24,34 @@ function busTLS(): Record<string, unknown> | undefined {
   };
 }
 
-// connect establishes the publisher channel and asserts the fanout exchange.
+// scheduleReconnect re-dials with capped backoff (amqplib does not auto-reconnect),
+// so a RabbitMQ restart doesn't permanently sever the publisher.
+function scheduleReconnect(delayMs = 1000): void {
+  if (reconnectTimer) return;
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect().catch(() => scheduleReconnect(Math.min(delayMs * 2, 30000)));
+  }, delayMs);
+}
+
+// connect establishes the publisher channel and asserts the fanout exchange, and
+// re-establishes it on connection loss (close/error → backoff reconnect).
 export async function connect(): Promise<void> {
-  const conn = await amqp.connect(process.env.AMQP_URL!, busTLS());
-  chan = await conn.createChannel();
-  await chan.assertExchange(CONFIG_EXCHANGE, "fanout", { durable: true });
-  conn.on("close", () => {
+  try {
+    const conn = await amqp.connect(process.env.AMQP_URL!, busTLS());
+    const ch = await conn.createChannel();
+    await ch.assertExchange(CONFIG_EXCHANGE, "fanout", { durable: true });
+    chan = ch;
+    conn.on("error", () => { /* surfaced via 'close'; avoid unhandled 'error' */ });
+    conn.on("close", () => {
+      chan = null;
+      scheduleReconnect();
+    });
+  } catch (err) {
     chan = null;
-  });
+    scheduleReconnect();
+    throw err; // let the caller log the initial failure; reconnect continues in the background
+  }
 }
 
 export function ready(): boolean {

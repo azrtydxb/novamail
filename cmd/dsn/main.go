@@ -65,7 +65,7 @@ func main() {
 		logger.Error("init body store", "err", err)
 		os.Exit(1)
 	}
-	bus, err := amqp.Dial(os.Getenv("AMQP_URL"))
+	bus, err := amqp.Dial(os.Getenv("AMQP_URL"), logger)
 	if err != nil {
 		logger.Error("init rabbitmq", "err", err)
 		os.Exit(1)
