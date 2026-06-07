@@ -105,6 +105,10 @@ web:
     host: novamail.kw.local
 
 delivery:
+  # Per-replica parallel message handlers (delivery is I/O-bound on the upstream
+  # send; concurrency, not CPU, fills the pipeline). The SMTP connection pool is
+  # sized to match. Tune up if the upstream provider can absorb more in parallel.
+  concurrency: 16
   replicas: 2
   # CPU HPA is superseded by KEDA queue-depth scaling below (delivery is
   # I/O-bound on upstream SMTP, so the work-queue backlog is the right signal).
