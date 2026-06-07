@@ -68,7 +68,7 @@ function DelivCard({ report, onCheck, checking }) {
           {hygiene.length > 0 && <SubHead>Hygiene &amp; reporting</SubHead>}
           {hygiene.map((r, i) => <DelivRecord key={i} r={r} />)}
         </div>
-      )}}
+      )}
     </Card>
   );
 }

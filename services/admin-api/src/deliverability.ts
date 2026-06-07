@@ -274,10 +274,15 @@ function isPrivateAddr(ip: string): boolean {
   }
   const a = ip.toLowerCase();
   if (a === "::1" || a === "::") return true;
-  if (a.startsWith("fe80") || a.startsWith("fc") || a.startsWith("fd")) return true; // link-local + ULA
+  if (/^fe[89ab]/.test(a)) return true; // link-local fe80::/10 (fe80–febf)
+  if (/^f[cd]/.test(a)) return true; // unique local fc00::/7
   if (a.startsWith("::ffff:")) return isPrivateAddr(a.slice(7)); // IPv4-mapped
   return false;
 }
+
+// hostnameRe bounds the domain to a plausible DNS name before it's interpolated
+// into a fetch URL (relay_domains.domain is free text).
+const hostnameRe = /^(?=.{1,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/i;
 
 // safeFetchText fetches a small text file over HTTPS for MTA-STS, with an SSRF
 // guard: HTTPS only, resolved host must not be an internal IP, no redirects,
@@ -290,14 +295,28 @@ async function safeFetchText(url: string, maxBytes = 64 * 1024, timeoutMs = 5000
   } catch {
     return null;
   }
-  if (u.protocol !== "https:") return null;
+  if (u.protocol !== "https:" || !hostnameRe.test(u.hostname)) return null;
   try {
     const addrs = (await withTimeout(dns.lookup(u.hostname, { all: true }), timeoutMs)).map((a) => a.address);
     if (addrs.length === 0 || addrs.some(isPrivateAddr)) return null;
     const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    return buf.subarray(0, maxBytes).toString("utf8");
+    if (!res.ok || !res.body) return null;
+    // Bounded read: stop as soon as we exceed maxBytes rather than buffering an
+    // arbitrarily large (possibly hostile) response into memory.
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString("utf8");
   } catch {
     return null;
   }
