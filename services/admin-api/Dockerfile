@@ -1,5 +1,7 @@
-# Multi-stage Node build → small non-root runtime. Multi-arch (arm64 on kw).
-FROM node:24-alpine AS build
+# Multi-stage Node build → small non-root runtime. Multi-arch (arm64 + amd64).
+# Build stage runs on the builder's native arch ($BUILDPLATFORM) to avoid QEMU
+# emulation flakiness during the TypeScript build.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install

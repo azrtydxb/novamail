@@ -1,6 +1,9 @@
 # Build the SPA, serve it from a non-root nginx that reverse-proxies /api to the
-# admin-api and injects the API key server-side (key never reaches the browser).
-FROM node:24-alpine AS build
+# admin-api. The build stage runs on the BUILDER's native arch ($BUILDPLATFORM):
+# esbuild/Vite crash under QEMU emulation (write EPIPE) when cross-building amd64
+# on an arm64 runner. dist is static + arch-neutral, so the final image stays
+# multi-arch via the per-arch nginx base.
+FROM --platform=$BUILDPLATFORM node:24-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
