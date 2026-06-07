@@ -147,7 +147,7 @@ function Dashboard({ live, onNavigate, onOpenMessage, layout = 'overview' }) {
   const stats = (
     <>
       <StatCard label="Relayed · 24h" value={fmtNum(METRICS.relayed24h)} spark={SERIES.relayed} />
-      <StatCard label="Accept rate" value={METRICS.acceptRate} unit="%" spark={SERIES.relayed} sparkColor="var(--accent-good)" />
+      <StatCard label="Accept rate" value={METRICS.acceptRate} unit="%" />
       <StatCard label="Deferred · 24h" value={fmtNum(METRICS.deferred24h)} spark={SERIES.deferred} sparkColor="var(--accent-warn)" />
       <StatCard label="Bounced · 24h" value={fmtNum(METRICS.bounced24h)} spark={SERIES.bounced} sparkColor="var(--accent-danger)" />
     </>
