@@ -49,6 +49,7 @@ spec:
           envFrom:
             {{- include "novamail.depsEnvFrom" . | nindent 12 }}
           env:
+            {{- include "novamail.tracingEnv" . | nindent 12 }}
             {{- range $k, $v := .Values.delivery.env }}
             - name: {{ $k }}
               value: {{ $v | quote }}

@@ -36,6 +36,11 @@ import (
 	"github.com/azrtydxb/novamail/internal/routing"
 	"github.com/azrtydxb/novamail/internal/secrets"
 	"github.com/azrtydxb/novamail/internal/store"
+	"github.com/azrtydxb/novamail/internal/tracing"
+
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // maxRateBlock caps how long a worker will sleep to honor a rate limit before
@@ -137,7 +142,10 @@ func main() {
 		logger.Info("dkim signing enabled", "domain", signer.Domain())
 	}
 
-	w := &worker{store: bodies, db: database, bus: bus, secretDir: secretDir, signer: signer, log: logger}
+	shutdownTracing, tracer := tracing.Init(initCtx, "novamail-delivery", logger)
+	defer func() { _ = shutdownTracing(context.Background()) }()
+
+	w := &worker{store: bodies, db: database, bus: bus, secretDir: secretDir, signer: signer, log: logger, tracer: tracer}
 	w.state.Store(buildState(initCtx, database, cipher, secretDir, logger))
 
 	// Hot reload: rebuild the routing/rate-limit snapshot on each config.changed.
@@ -202,6 +210,7 @@ type worker struct {
 	state     atomic.Pointer[routeState]
 	signer    *dkim.Signer
 	log       *slog.Logger
+	tracer    trace.Tracer
 }
 
 // chain returns the ordered providers to try for a job, resolved from the
@@ -225,6 +234,16 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 		_ = d.Reject(false)
 		return
 	}
+
+	// Link this message's spans to the ingress submission (carried in the job) and
+	// open the root delivery span.
+	ctx = tracing.Extract(ctx, job.Trace)
+	ctx, span := w.tracer.Start(ctx, "delivery.handle", trace.WithAttributes(
+		attribute.String("message.id", job.MessageID),
+		attribute.String("recipient.domain", job.RoutingHints.RecipientDomain),
+		attribute.Int("attempt", job.Attempt),
+	))
+	defer span.End()
 
 	hctx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
@@ -293,7 +312,16 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 			}
 		}
 		sendStart := time.Now()
-		res, serr := p.Send(hctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
+		sctx, sendSpan := w.tracer.Start(hctx, "provider.send", trace.WithAttributes(
+			attribute.String("provider.name", p.Name()),
+		))
+		res, serr := p.Send(sctx, &providers.Message{Envelope: job.Envelope, Body: bytes.NewReader(raw)})
+		sendSpan.SetAttributes(attribute.String("outcome", res.Outcome.String()))
+		if serr != nil {
+			sendSpan.RecordError(serr)
+			sendSpan.SetStatus(codes.Error, serr.Error())
+		}
+		sendSpan.End()
 		sendDuration.WithLabelValues(p.Name()).Observe(time.Since(sendStart).Seconds())
 		// A non-nil error must never be read as a successful delivery: if a
 		// provider returns an error with a zero-value (Delivered) outcome, treat
@@ -333,18 +361,28 @@ func (w *worker) handle(ctx context.Context, d amqp091.Delivery) {
 }
 
 // materialize fetches the body and applies DKIM signing, returning the bytes to
-// relay (buffered so failover can replay them).
+// relay (buffered so failover can replay them). Spans split body-fetch vs DKIM
+// signing so the trace shows which dominates.
 func (w *worker) materialize(ctx context.Context, job *model.RelayJob) ([]byte, error) {
+	ctx, span := w.tracer.Start(ctx, "delivery.materialize")
+	defer span.End()
+
+	_, fetchSpan := w.tracer.Start(ctx, "store.get_body")
 	body, err := w.store.Get(ctx, job.BodyRef.Key)
+	fetchSpan.End()
 	if err != nil {
+		span.RecordError(err)
 		return nil, err
 	}
 	defer func() { _ = body.Close() }()
 
 	var src io.Reader = body
 	if sgn := w.signerFor(job.RoutingHints.SenderDomain); sgn != nil {
+		_, signSpan := w.tracer.Start(ctx, "dkim.sign")
 		signed, serr := sgn.Sign(body)
+		signSpan.End()
 		if serr != nil {
+			span.RecordError(serr)
 			return nil, serr
 		}
 		src = signed

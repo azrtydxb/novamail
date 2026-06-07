@@ -19,17 +19,21 @@ import (
 	"github.com/azrtydxb/novamail/internal/db"
 	"github.com/azrtydxb/novamail/internal/model"
 	"github.com/azrtydxb/novamail/internal/store"
+	"github.com/azrtydxb/novamail/internal/tracing"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // backend implements smtp.Backend: authorizes submissions (SMTP AUTH against
 // accounts OR trusted source IP via relay_clients), persists the body, records
 // metadata, and publishes a relay job. The inbound policy is hot-reloaded.
 type backend struct {
-	store store.Store
+	store  store.Store
 	db     *db.DB
 	bus    *amqp.Conn
 	policy atomic.Pointer[inboundPolicy]
 	log    *slog.Logger
+	tracer trace.Tracer
 }
 
 func (b *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
@@ -146,6 +150,8 @@ func (s *session) Rcpt(to string, opts *smtp.RcptOptions) error {
 func (s *session) Data(r io.Reader) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	ctx, span := s.be.tracer.Start(ctx, "ingress.submit")
+	defer span.End()
 
 	id := newID()
 	// Tee the body into a capped header buffer + byte counter while storing it,
@@ -189,6 +195,8 @@ func (s *session) Data(r io.Reader) error {
 		DSNReturn:    s.dsnReturn,
 		// Suppress the bounce only if every recipient asked for NOTIFY=NEVER.
 		DSNSuppress: s.rcptN > 0 && s.neverN == s.rcptN,
+		// Carry the trace context so delivery's spans link to this submission.
+		Trace: tracing.Inject(ctx),
 	}
 	if err := s.be.bus.Publish(ctx, job); err != nil {
 		// Body + metadata are durable; the message is recoverable. Surface a

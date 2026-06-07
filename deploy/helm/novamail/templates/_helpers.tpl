@@ -137,3 +137,11 @@ app.kubernetes.io/component: web
             - { key: tls.key, path: tls.key }
 {{- end }}
 {{- end -}}
+
+{{/* OpenTelemetry env for the instrumented Go services */}}
+{{- define "novamail.tracingEnv" -}}
+{{- if .Values.tracing.enabled }}
+- name: OTEL_EXPORTER_OTLP_ENDPOINT
+  value: {{ .Values.tracing.otlpEndpoint | quote }}
+{{- end }}
+{{- end -}}
