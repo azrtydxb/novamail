@@ -69,11 +69,17 @@ func env(k, def string) string {
 }
 
 // tlsVersion maps a tls_policy.min_version string to a crypto/tls constant.
-func tlsVersion(s string) uint16 {
-	if s == "1.3" {
+// Unknown values fall back to TLS 1.2 and are logged (the column is free-form).
+func tlsVersion(s string, log *slog.Logger) uint16 {
+	switch s {
+	case "1.3":
 		return tls.VersionTLS13
+	case "1.2", "":
+		return tls.VersionTLS12
+	default:
+		log.Warn("unknown tls_policy.min_version; defaulting to 1.2", "value", s)
+		return tls.VersionTLS12
 	}
-	return tls.VersionTLS12
 }
 
 func main() {
@@ -418,7 +424,7 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 	globalPol := providers.DefaultTLSPolicy
 	byProvider := map[string]providers.TLSPolicy{}
 	for _, t := range tlsPols {
-		pol := providers.TLSPolicy{MinVersion: tlsVersion(t.MinVersion), STARTTLSRequired: t.STARTTLSRequired}
+		pol := providers.TLSPolicy{MinVersion: tlsVersion(t.MinVersion, logger), STARTTLSRequired: t.STARTTLSRequired}
 		if t.ProviderID == "" {
 			globalPol = pol
 		} else {

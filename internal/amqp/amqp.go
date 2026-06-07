@@ -299,7 +299,7 @@ func declare(ch *amqp.Channel) error {
 
 // publish sends on the current channel, retrying across a reconnect: if the
 // channel is gone, it waits briefly for the supervisor to re-establish it and
-// tries again, until ctx expires or the retry budget is exhausted.
+// tries again, until the caller's context expires.
 func (c *Conn) publish(ctx context.Context, exchange, key string, pub amqp.Publishing) error {
 	var lastErr error
 	for {
@@ -386,14 +386,16 @@ func (c *Conn) Consume(prefetch int) (<-chan amqp.Delivery, error) {
 
 func (c *Conn) registerConsumer(queue string, prefetch int) (<-chan amqp.Delivery, error) {
 	cs := &consumer{queue: queue, prefetch: prefetch, out: make(chan amqp.Delivery, prefetch)}
-	// Register only after a successful start, so a failed subscription isn't left
-	// in the registry to be silently re-established later behind the caller's back.
+	// Hold regMu across start+append: this serialises against reestablish() (which
+	// also holds regMu), so a reconnect can't slip between a successful start and
+	// registration and miss re-subscribing this consumer. Register only on success,
+	// so a failed subscription isn't left in the registry behind the caller's back.
+	c.regMu.Lock()
+	defer c.regMu.Unlock()
 	if err := c.startConsumer(cs); err != nil {
 		return nil, err
 	}
-	c.regMu.Lock()
 	c.consumers = append(c.consumers, cs)
-	c.regMu.Unlock()
 	return cs.out, nil
 }
 

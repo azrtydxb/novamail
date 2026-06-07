@@ -62,6 +62,9 @@ export async function connect(): Promise<void> {
     const onLost = () => {
       if (chan === ch) {
         chan = null;
+        // If only the channel died, tear the connection down too so we don't
+        // leak it across the re-dial (closing an already-closing conn is a no-op).
+        conn.close().catch(() => {});
         scheduleReconnect();
       }
     };

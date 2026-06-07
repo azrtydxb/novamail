@@ -45,7 +45,10 @@ func TestFactoryUnknownType(t *testing.T) {
 }
 
 func TestSESDefaultsToSTARTTLS(t *testing.T) {
-	p, _ := New(model.Provider{Name: "ses", Type: "ses"}, Creds{Username: "u", Password: "p"}, DefaultTLSPolicy)
+	p, err := New(model.Provider{Name: "ses", Type: "ses"}, Creds{Username: "u", Password: "p"}, DefaultTLSPolicy)
+	if err != nil {
+		t.Fatalf("New(ses): %v", err)
+	}
 	sp := p.(*SMTPProvider)
 	if sp.cfg.TLSMode != "starttls" {
 		t.Errorf("ses TLSMode=%q want starttls", sp.cfg.TLSMode)
