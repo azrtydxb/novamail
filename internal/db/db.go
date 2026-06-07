@@ -154,7 +154,7 @@ func (d *DB) GetTLSPolicies(ctx context.Context) ([]model.TLSPolicy, error) {
 		// "global default + per-provider override" is stable even if the table
 		// accidentally holds duplicate rows for a provider.
 		`SELECT coalesce(provider_id::text,''), min_version, starttls_required
-		   FROM tls_policy ORDER BY provider_id NULLS FIRST`)
+		   FROM tls_policy ORDER BY provider_id NULLS FIRST, min_version`)
 	if err != nil {
 		return nil, fmt.Errorf("query tls policies: %w", err)
 	}
