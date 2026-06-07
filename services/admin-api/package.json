@@ -9,7 +9,7 @@
     "dev": "tsx watch src/server.ts",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ext .ts",
-    "test": "node --test --import tsx"
+    "test": "node --test --import tsx \"src/**/*.test.ts\""
   },
   "dependencies": {
     "amqplib": "^0.10.4",

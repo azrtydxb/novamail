@@ -35,17 +35,21 @@ if [ "$(psql_q "select 1 from accounts where username='${SMTP_USER}' and enabled
 fi
 
 echo "submitting '${SUBJECT}' as ${SMTP_USER} (${FROM} -> ${TO})"
-kc run e2e-submit-$RANDOM --rm -i --restart=Never --image=python:3.12-alpine --command -- \
-  python3 -c "
-import smtplib, ssl
+# Pass values to Python via the environment (os.environ) rather than interpolating
+# them into the source — so a credential containing a quote can't break the script.
+kc run e2e-submit-$RANDOM --rm -i --restart=Never --image=python:3.12-alpine \
+  --env="SMTP_USER=$SMTP_USER" --env="SMTP_PASS=$SMTP_PASS" --env="FROM=$FROM" \
+  --env="TO=$TO" --env="SUBJECT=$SUBJECT" --command -- \
+  python3 -c '
+import os, smtplib, ssl
 from email.message import EmailMessage
 ctx = ssl.create_default_context(); ctx.check_hostname=False; ctx.verify_mode=ssl.CERT_NONE
-s = smtplib.SMTP('novamail-ingress', 587, timeout=20); s.starttls(context=ctx)
-s.login('${SMTP_USER}', '${SMTP_PASS}')
-m = EmailMessage(); m['From']='${FROM}'; m['To']='${TO}'; m['Subject']='${SUBJECT}'
-m.set_content('novamail e2e smoke')
-s.send_message(m); s.quit(); print('submitted')
-" 2>&1 | grep -vE 'pod .* deleted|recorded' || { echo "FAIL: submission error"; exit 1; }
+s = smtplib.SMTP("novamail-ingress", 587, timeout=20); s.starttls(context=ctx)
+s.login(os.environ["SMTP_USER"], os.environ["SMTP_PASS"])
+m = EmailMessage(); m["From"]=os.environ["FROM"]; m["To"]=os.environ["TO"]; m["Subject"]=os.environ["SUBJECT"]
+m.set_content("novamail e2e smoke")
+s.send_message(m); s.quit(); print("submitted")
+' 2>&1 | grep -vE 'pod .* deleted|recorded' || { echo "FAIL: submission error"; exit 1; }
 
 echo "polling for relayed status (timeout ${TIMEOUT}s)..."
 deadline=$(( $(date +%s) + TIMEOUT ))
