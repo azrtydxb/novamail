@@ -32,6 +32,14 @@ rules:
   - apiGroups: [apps]
     resources: [deployments, replicasets, statefulsets]
     verbs: ["*"]
+  # Autoscaling: HPAs for the data plane + management services.
+  - apiGroups: [autoscaling]
+    resources: [horizontalpodautoscalers]
+    verbs: ["*"]
+  # KEDA: queue-depth ScaledObject + TriggerAuthentication for delivery.
+  - apiGroups: [keda.sh]
+    resources: [scaledobjects, triggerauthentications]
+    verbs: ["*"]
   - apiGroups: [networking.k8s.io]
     resources: [ingresses]
     verbs: ["*"]

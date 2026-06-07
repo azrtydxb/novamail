@@ -106,11 +106,22 @@ web:
 
 delivery:
   replicas: 2
+  # CPU HPA is superseded by KEDA queue-depth scaling below (delivery is
+  # I/O-bound on upstream SMTP, so the work-queue backlog is the right signal).
   autoscaling:
-    enabled: true
+    enabled: false
     minReplicas: 2
     maxReplicas: 10
     targetCPUUtilizationPercentage: 70
+  # KEDA: scale on relay.work.q depth via mutual-TLS AMQP to nova-bus.
+  keda:
+    enabled: true
+    minReplicas: 2
+    maxReplicas: 10
+    queueName: relay.work.q
+    messagesPerReplica: 50   # target backlog per delivery replica
+    pollingInterval: 15
+    cooldownPeriod: 300
   resources:
     requests: { cpu: 50m, memory: 64Mi }
     limits: { cpu: 500m, memory: 256Mi }
