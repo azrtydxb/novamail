@@ -134,6 +134,12 @@ jobs:
           kubectl config set-context kw --cluster=kw --user=runner --namespace=novamail
           kubectl config use-context kw
       - name: Helm upgrade --install
+        # Store release state in ConfigMaps (not Secrets) so the deployer SA can
+        # be least-privileged on Secrets (read-only) — a compromised runner can't
+        # read app credentials/KEK. The first run with this driver adopts the
+        # existing resources by release name (annotations already present).
+        env:
+          HELM_DRIVER: configmap
         run: |
           TAG="sha-${GITHUB_SHA::7}"
           helm upgrade --install novamail deploy/helm/novamail \
