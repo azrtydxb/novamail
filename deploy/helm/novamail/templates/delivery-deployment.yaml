@@ -25,6 +25,16 @@ spec:
       {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      # Spread replicas across nodes so a single node loss can't take out a tier.
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "novamail.delivery.selectorLabels" . | nindent 20 }}
       containers:
         - name: delivery
           image: {{ include "novamail.deliveryImage" . }}

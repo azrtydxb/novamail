@@ -25,17 +25,34 @@ spec:
         runAsUser: 101    # nginx-unprivileged
         seccompProfile:
           type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "novamail.web.selectorLabels" . | nindent 20 }}
       containers:
         - name: web
           image: {{ include "novamail.webImage" . }}
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             capabilities:
               drop: ["ALL"]
           ports:
             - name: http
               containerPort: {{ .Values.web.port }}
+          volumeMounts:
+            # Writable paths nginx-unprivileged needs under a read-only rootfs:
+            # the entrypoint renders /etc/nginx/templates/*.template into conf.d,
+            # plus proxy/client temp + pid.
+            - { name: nginx-conf, mountPath: /etc/nginx/conf.d }
+            - { name: nginx-cache, mountPath: /var/cache/nginx }
+            - { name: tmp, mountPath: /tmp }
           env:
             # nginx proxies /api to the admin-api with this key (server-side).
             - name: ADMIN_API_KEY
@@ -54,6 +71,10 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.web.resources | nindent 12 }}
+      volumes:
+        - { name: nginx-conf, emptyDir: {} }
+        - { name: nginx-cache, emptyDir: {} }
+        - { name: tmp, emptyDir: {} }
 ---
 apiVersion: v1
 kind: Service
