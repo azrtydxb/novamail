@@ -101,7 +101,7 @@ function DeliverabilityTile({ onNavigate }) {
     <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', padding: '11px 15px' }}>
         <span className="mono" style={{ fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-2)', flex: 1 }}>Deliverability</span>
-        <button className="mono" onClick={() => onNavigate('deliverability')} style={{ fontSize: 11, color: 'var(--link)', textDecoration: 'underline', textDecorationStyle: 'dashed', textUnderlineOffset: 3 }}>all domains</button>
+        <button type="button" className="mono" onClick={() => onNavigate('deliverability')} style={{ fontSize: 11, color: 'var(--link)', textDecoration: 'underline', textDecorationStyle: 'dashed', textUnderlineOffset: 3 }}>all domains</button>
       </div>
       {!s && <div style={{ padding: '4px 15px 13px', fontSize: 12, color: 'var(--fg-3)' }}>checking…</div>}
       {s && s.failed && <div style={{ padding: '4px 15px 13px', fontSize: 12, color: 'var(--fg-3)' }}>unavailable</div>}

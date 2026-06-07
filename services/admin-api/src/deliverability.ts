@@ -407,13 +407,15 @@ async function persistCheck(report: DomainReport): Promise<void> {
 // table is missing/empty — callers fall back to live checks).
 async function readCachedMap(): Promise<Map<string, DomainReport>> {
   const map = new Map<string, DomainReport>();
-  const { rows } = await pool.query<{ domain: string; record: RecordReport["record"]; selector: string; status: CheckStatus; found: string | null; expected: string | null; detail: string | null; fix: string | null; checked_at: Date }>(
+  const { rows } = await pool.query<{ domain: string; record: RecordReport["record"]; selector: string; status: CheckStatus; found: string | null; expected: string | null; detail: string | null; fix: string | null; checked_at: Date | string }>(
     "select domain,record,selector,status,found,expected,detail,fix,checked_at from domain_dns_checks order by domain",
   );
   for (const r of rows) {
     let rep = map.get(r.domain);
     if (!rep) {
-      rep = { domain: r.domain, checkedAt: r.checked_at.toISOString(), status: "ok", records: [] };
+      // checked_at may arrive as a Date or a string depending on the pg type
+      // parser config — normalise via new Date().
+      rep = { domain: r.domain, checkedAt: new Date(r.checked_at).toISOString(), status: "ok", records: [] };
       map.set(r.domain, rep);
     }
     rep.records.push({ record: r.record, selector: r.selector || undefined, status: r.status, found: r.found, expected: r.expected ?? undefined, detail: r.detail ?? "", fix: r.fix ?? undefined });
@@ -490,18 +492,30 @@ export function registerDeliverability(app: FastifyInstance): void {
     return report;
   });
 
-  // Cached single-domain read.
+  // Cached single-domain read (queries just this domain, not the whole table).
   app.get("/api/deliverability/:domain", async (req, reply) => {
     const domain = (req.params as { domain: string }).domain;
     const { rowCount } = await pool.query("select 1 from relay_domains where domain = $1", [domain]);
     if (!rowCount) return reply.code(404).send({ error: "unknown relay domain" });
-    const cached = (await readCachedMap().catch(() => new Map<string, DomainReport>())).get(domain);
-    return cached ?? checkDomain(domain);
+    try {
+      const { rows } = await pool.query<{ record: RecordReport["record"]; selector: string; status: CheckStatus; found: string | null; expected: string | null; detail: string | null; fix: string | null; checked_at: Date | string }>(
+        "select record,selector,status,found,expected,detail,fix,checked_at from domain_dns_checks where domain = $1",
+        [domain],
+      );
+      if (rows.length) {
+        const records: RecordReport[] = rows.map((r) => ({ record: r.record, selector: r.selector || undefined, status: r.status, found: r.found, expected: r.expected ?? undefined, detail: r.detail ?? "", fix: r.fix ?? undefined }));
+        return { domain, checkedAt: new Date(rows[0].checked_at).toISOString(), status: rollup(records), records } satisfies DomainReport;
+      }
+    } catch {
+      /* fall through to a live check if the cache table is unavailable */
+    }
+    return checkDomain(domain);
   });
 
   // Periodic background refresh keeps the cache fresh (+ history for regressions).
-  const hours = Number(process.env.NOVAMAIL_DELIVERABILITY_INTERVAL_HOURS ?? 6);
-  const ms = Math.max(1, hours) * 3_600_000;
+  const parsed = Number(process.env.NOVAMAIL_DELIVERABILITY_INTERVAL_HOURS);
+  const hours = Number.isFinite(parsed) && parsed > 0 ? parsed : 6;
+  const ms = hours * 3_600_000;
   setTimeout(() => refreshAll(app.log).catch(() => {}), 30_000).unref();
   setInterval(() => refreshAll(app.log).catch(() => {}), ms).unref();
   app.log.info({ intervalHours: hours }, "deliverability scheduler started");

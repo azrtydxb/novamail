@@ -13,7 +13,9 @@ const REC_LABEL = { spf: 'SPF', dkim: 'DKIM', dmarc: 'DMARC', mx: 'MX', mta_sts:
 const AUTH_RECORDS = ['spf', 'dkim', 'dmarc']; // required; the rest are hygiene
 
 function relTime(iso) {
-  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  const t = new Date(iso).getTime();
+  if (!Number.isFinite(t)) return '';
+  const s = Math.max(0, (Date.now() - t) / 1000);
   if (s < 60) return 'just now';
   if (s < 3600) return `${Math.floor(s / 60)}m ago`;
   if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
@@ -100,8 +102,10 @@ function Deliverability() {
   }
   useDelivEffect(() => { loadAll(); }, []);
 
-  // Force a fresh re-check of every domain.
+  // Force a fresh re-check of every domain. Guard against double-clicks issuing
+  // concurrent POSTs.
   async function recheckAll() {
+    if (busy) return;
     setBusy(true);
     try {
       setReports(await api('/deliverability/check', { method: 'POST' }));
