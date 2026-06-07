@@ -7,7 +7,9 @@
 #   TOTAL=5000 CONCURRENCY=60 ./run-loadtest.sh
 #
 # Requires kubectl access to the novamail namespace.
-set -euo pipefail
+# NB: intentionally NOT `set -e` — the sampling loop must tolerate a transient
+# kubectl failure (a dropped exec mid-run can't be allowed to abort the test).
+set -uo pipefail
 NS="${NS:-novamail}"
 TOTAL="${TOTAL:-3000}"
 CONCURRENCY="${CONCURRENCY:-40}"
@@ -17,7 +19,6 @@ kc() { kubectl -n "$NS" "$@"; }
 
 PGPOD="$(kc get pods -l cnpg.io/cluster=novamail-pg -o jsonpath='{.items[0].metadata.name}')"
 RMQPOD="$(kc get pods -l app.kubernetes.io/name=nova-bus -o jsonpath='{.items[0].metadata.name}')"
-PGPASS_ARGS=(env) # postgres superuser via local socket (peer auth), no password
 
 relayed_count() { kc exec "$PGPOD" -- psql -U postgres -d novamail -tAc \
   "select count(*) from messages where status='relayed'" 2>/dev/null | tr -d '[:space:]'; }
@@ -48,6 +49,12 @@ spec:
           env:
             - { name: TOTAL, value: "$TOTAL" }
             - { name: CONCURRENCY, value: "$CONCURRENCY" }
+            - { name: INGRESS, value: "${INGRESS:-novamail-ingress}" }
+            - { name: PORT, value: "${PORT:-587}" }
+            - { name: SMTP_USER, value: "${SMTP_USER:-relaytest}" }
+            - { name: SMTP_PASS, value: "${SMTP_PASS:-relaypass}" }
+            - { name: FROM, value: "${FROM:-load@example.com}" }
+            - { name: TO, value: "${TO:-sink@downstream.test}" }
           volumeMounts: [{ name: src, mountPath: /src }]
       volumes: [{ name: src, configMap: { name: nm-loadgen-src } }]
 YAML
@@ -75,9 +82,9 @@ for i in $(seq 1 "$MAX_SAMPLES"); do
 done
 
 submit_line="$(kc logs job/nm-loadgen 2>/dev/null | grep '^DONE' || echo 'DONE (sender log unavailable)')"
-mailpit="$(kc exec "$RMQPOD" -- sh -c 'true' 2>/dev/null; kc run nm-mp-$RANDOM --rm -i --restart=Never \
-  --image=curlimages/curl:8.10.1 --command -- sh -c 'curl -s http://novamail-mailpit:8025/api/v1/messages?limit=1' 2>/dev/null \
-  | grep -oE "\"total\":[0-9]+" | head -1 || true)"
+mailpit="$(kc run nm-mp-$RANDOM --rm -i --restart=Never --image=curlimages/curl:8.10.1 --command -- \
+  sh -c 'curl -s http://novamail-mailpit:8025/api/v1/messages?limit=1' 2>/dev/null \
+  | grep -oE "\"total\":[0-9]+" | head -1)"
 
 echo
 echo "=== RESULTS ==="

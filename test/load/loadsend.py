@@ -39,6 +39,8 @@ def worker(wid):
     try:
         s = connect()
     except Exception as e:
+        with lock:
+            errors[0] += 1
         print(f"[w{wid}] connect failed: {e}", flush=True)
         return
     while True:
