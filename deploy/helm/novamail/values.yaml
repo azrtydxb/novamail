@@ -168,3 +168,11 @@ maintenance:
   resources:
     requests: { cpu: 25m, memory: 32Mi }
     limits: { cpu: 200m, memory: 128Mi }
+
+# Postgres mutual TLS: mount the CNPG CA + an app client cert so every
+# data-plane/admin connection is verify-full + client-authenticated.
+pgmtls:
+  enabled: true
+  caSecret: novamail-pg-ca         # CNPG-managed CA (ca.crt)
+  clientSecret: novamail-pg-client  # app client cert (CN=novamail), signed by the CA
+  mountPath: /etc/novamail/pgtls

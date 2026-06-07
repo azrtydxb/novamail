@@ -83,6 +83,14 @@ spec:
             periodSeconds: 5
           resources:
             {{- toYaml .Values.adminApi.resources | nindent 12 }}
+          {{- if .Values.pgmtls.enabled }}
+          volumeMounts:
+            {{- include "novamail.pgtls.volumeMount" . | nindent 12 }}
+          {{- end }}
+      {{- if .Values.pgmtls.enabled }}
+      volumes:
+        {{- include "novamail.pgtls.volume" . | nindent 8 }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
