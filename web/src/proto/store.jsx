@@ -4,7 +4,7 @@
 import { api } from '../api.ts';
 
 export const PROVIDER_TYPE_LABEL = {
-  ses: 'Amazon SES', m365: 'Microsoft 365', gmail: 'Gmail / XOAUTH2', smtp: 'Generic SMTP',
+  ses: 'Amazon SES', m365: 'Microsoft 365', gmail: 'Gmail / XOAUTH2', smtp: 'Generic SMTP', direct: 'Direct-to-MX',
 };
 
 // Provider auth-mode <-> DB CHECK (xoauth2|smtp-auth|ip|iam) translation.
@@ -136,7 +136,7 @@ async function loadAll() {
 // ---- writes: prototype shape -> API ----
 async function save(coll, f, item) {
   if (coll === 'providers') {
-    const body = { name: f.name, type: f.type, endpoint: f.endpoint, auth_mode: AUTH_TO_DB[f.auth_mode] || 'ip', enabled: !!f.enabled, secret_ref: f.secret_ref && f.secret_ref !== '—' ? f.secret_ref : null };
+    const body = { name: f.name, type: f.type, endpoint: f.type === 'direct' ? null : (f.endpoint || null), auth_mode: AUTH_TO_DB[f.auth_mode] || 'ip', enabled: !!f.enabled, secret_ref: f.type === 'direct' ? null : (f.secret_ref && f.secret_ref !== '—' ? f.secret_ref : null) };
     item ? await api(`/providers/${item.id}`, { method: 'PUT', body }) : await api('/providers', { method: 'POST', body });
   } else if (coll === 'rules') {
     const body = { recipient_domain: unstar(f.recipient_domain), sender_domain: unstar(f.sender_domain), provider_chain: f.provider_chain, priority: Number(f.priority), enabled: !!f.enabled };

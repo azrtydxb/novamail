@@ -70,6 +70,10 @@ func New(p model.Provider, c Creds, pol TLSPolicy) (Provider, error) {
 			User: c.Username, ClientID: c.ClientID, ClientSecret: c.ClientSecret,
 			RefreshToken: c.RefreshToken,
 		}), nil
+	case "direct":
+		// Direct-to-MX: no endpoint/credentials — resolves the recipient domain's
+		// MX per message and delivers on port 25 (opportunistic STARTTLS).
+		return NewDirect(DirectConfig{Name: p.Name, HELO: DirectHELO, MinTLSVersion: pol.MinVersion}), nil
 	default:
 		return nil, fmt.Errorf("providers: unknown type %q", p.Type)
 	}

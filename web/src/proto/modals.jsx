@@ -167,7 +167,7 @@ function ModalShell({ eyebrow, title, icon, onClose, children, footer, width = 4
   );
 }
 
-const AUTH_BY_TYPE = { ses: ['AWS-SIGV4'], m365: ['XOAUTH2'], gmail: ['XOAUTH2'], smtp: ['PLAIN', 'LOGIN', 'NONE'] };
+const AUTH_BY_TYPE = { ses: ['AWS-SIGV4'], m365: ['XOAUTH2'], gmail: ['XOAUTH2'], smtp: ['PLAIN', 'LOGIN', 'NONE'], direct: ['NONE'] };
 
 /* ===== resource forms ===== */
 function ProviderForm({ item, onClose }) {
@@ -175,7 +175,9 @@ function ProviderForm({ item, onClose }) {
   const [f, setF] = useMState(item ? { ...item } : { name: '', type: 'ses', endpoint: '', auth_mode: 'AWS-SIGV4', secret_ref: '', enabled: true });
   const [tried, setTried] = useMState(false);
   const up = (k, v) => setF(s => ({ ...s, [k]: v }));
-  const invalid = { name: !f.name.trim(), endpoint: !f.endpoint.trim() };
+  // Direct-to-MX resolves the recipient's MX per message: no endpoint/auth/secret.
+  const isDirect = f.type === 'direct';
+  const invalid = { name: !f.name.trim(), endpoint: !isDirect && !f.endpoint.trim() };
   const save = async () => {
     setTried(true);
     if (invalid.name || invalid.endpoint) return;
@@ -191,8 +193,12 @@ function ProviderForm({ item, onClose }) {
           <FRow label="type"><FSelect value={f.type} onChange={v => { up('type', v); up('auth_mode', AUTH_BY_TYPE[v][0]); }} options={Object.keys(AUTH_BY_TYPE).map(t => ({ value: t, label: window.NM_DATA.PROVIDER_TYPE_LABEL[t] }))} /></FRow>
           <FRow label="auth mode"><FSelect value={f.auth_mode} onChange={v => up('auth_mode', v)} options={AUTH_BY_TYPE[f.type]} /></FRow>
         </div>
-        <FRow label="endpoint" hint="host:port" error={tried && invalid.endpoint ? 'required' : null}><FText value={f.endpoint} onChange={v => up('endpoint', v)} placeholder="email-smtp.us-east-1.amazonaws.com:587" invalid={tried && invalid.endpoint} /></FRow>
-        <FRow label="secret ref" hint="envelope-encrypted credential"><FText value={f.secret_ref} onChange={v => up('secret_ref', v)} placeholder="sec/ses-use1" /></FRow>
+        {isDirect
+          ? <div style={{ fontSize: 12, color: 'var(--fg-3)', padding: '2px 0' }}>Direct-to-MX: resolves the recipient domain's MX per message and delivers on port&nbsp;25 (opportunistic STARTTLS). No endpoint or credentials — set the delivery HELO to a real FQDN with PTR, and ensure outbound&nbsp;:25 egress.</div>
+          : <>
+              <FRow label="endpoint" hint="host:port" error={tried && invalid.endpoint ? 'required' : null}><FText value={f.endpoint} onChange={v => up('endpoint', v)} placeholder="email-smtp.us-east-1.amazonaws.com:587" invalid={tried && invalid.endpoint} /></FRow>
+              <FRow label="secret ref" hint="envelope-encrypted credential"><FText value={f.secret_ref} onChange={v => up('secret_ref', v)} placeholder="sec/ses-use1" /></FRow>
+            </>}
         <FToggle value={f.enabled} onChange={v => up('enabled', v)} label="Enabled — eligible for routing" />
       </div>
     </ModalShell>

@@ -1,6 +1,7 @@
-// Package providers defines the upstream relay provider abstraction and its
-// built-in implementations. The relay never delivers direct-to-MX; every
-// message exits through an authenticated upstream provider.
+// Package providers defines the delivery provider abstraction and its built-in
+// implementations. By default every message exits through an authenticated
+// upstream provider (SMTP/SES/M365/Gmail); a `direct` provider additionally
+// supports direct-to-MX delivery (resolve MX, deliver on :25) when configured.
 package providers
 
 import (
