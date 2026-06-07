@@ -93,9 +93,10 @@ export function registerRoutes(app: FastifyInstance): void {
       const body = (await res.json()) as { ok?: boolean };
       // A reachable delivery service that ran the test is a SUCCESSFUL request,
       // even when the provider check failed (ok:false) — return 200 with the
-      // result; reserve 5xx for the delivery service being unreachable/erroring.
+      // result. Pass a 4xx (e.g. unknown provider) through; reserve 502 for the
+      // delivery service erroring/being unreachable.
       if (res.ok) return reply.code(200).send(body);
-      return reply.code(502).send(body);
+      return reply.code(res.status >= 500 ? 502 : res.status).send(body);
     } catch (e) {
       return reply.code(502).send({ ok: false, error: (e as Error).message });
     }

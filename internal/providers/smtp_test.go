@@ -35,6 +35,9 @@ func TestHostOnly(t *testing.T) {
 		"mail.example.com:587": "mail.example.com",
 		"10.0.0.1:25":          "10.0.0.1",
 		"hostonly":             "hostonly",
+		"[2001:db8::1]:587":    "2001:db8::1", // bracketed IPv6 host:port
+		"[fe80::1]:465":        "fe80::1",
+		"2001:db8::1":          "2001:db8::1", // bare IPv6, no port
 	} {
 		if got := hostOnly(in); got != want {
 			t.Errorf("hostOnly(%q)=%q want %q", in, got, want)
