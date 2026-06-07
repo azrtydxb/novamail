@@ -13,13 +13,14 @@ import (
 
 // SMTPConfig configures the generic SMTP smarthost provider.
 type SMTPConfig struct {
-	Name     string
-	Addr     string // host:port
-	TLSMode  string // "none" | "starttls" | "implicit"
-	Username string // optional; enables PLAIN auth when set
-	Password string
-	HELO     string
-	Insecure bool // skip TLS verification (lab/self-signed upstreams)
+	Name          string
+	Addr          string // host:port
+	TLSMode       string // "none" | "starttls" | "implicit"
+	Username      string // optional; enables PLAIN auth when set
+	Password      string
+	HELO          string
+	Insecure      bool   // skip TLS verification (lab/self-signed upstreams)
+	MinTLSVersion uint16 // 0 ⇒ TLS 1.2 (tls_policy.min_version)
 }
 
 // SMTPProvider relays through a generic authenticated SMTP smarthost.
@@ -39,7 +40,11 @@ func (p *SMTPProvider) Name() string { return p.cfg.Name }
 // smarthost must not hang past the per-message timeout) and sets a connection
 // deadline so the whole MAIL/RCPT/DATA exchange is bounded.
 func (p *SMTPProvider) dial(ctx context.Context) (*smtp.Client, error) {
-	tlsCfg := &tls.Config{ServerName: hostOnly(p.cfg.Addr), InsecureSkipVerify: p.cfg.Insecure} //nolint:gosec // lab smarthosts may be self-signed; gated by config
+	minVer := p.cfg.MinTLSVersion
+	if minVer == 0 {
+		minVer = tls.VersionTLS12
+	}
+	tlsCfg := &tls.Config{ServerName: hostOnly(p.cfg.Addr), InsecureSkipVerify: p.cfg.Insecure, MinVersion: minVer} //nolint:gosec // lab smarthosts may be self-signed; gated by config
 	nd := &net.Dialer{}
 	if dl, ok := ctx.Deadline(); ok {
 		nd.Deadline = dl

@@ -18,7 +18,7 @@ func TestFactoryTypes(t *testing.T) {
 		{"gmail", "p", "gmail"},
 	}
 	for _, c := range cases {
-		p, err := New(model.Provider{Name: "p", Type: c.typ}, Creds{Username: "u"})
+		p, err := New(model.Provider{Name: "p", Type: c.typ}, Creds{Username: "u"}, DefaultTLSPolicy)
 		if err != nil {
 			t.Fatalf("New(%s): %v", c.typ, err)
 		}
@@ -39,13 +39,13 @@ func TestFactoryTypes(t *testing.T) {
 }
 
 func TestFactoryUnknownType(t *testing.T) {
-	if _, err := New(model.Provider{Type: "carrier-pigeon"}, Creds{}); err == nil {
+	if _, err := New(model.Provider{Type: "carrier-pigeon"}, Creds{}, DefaultTLSPolicy); err == nil {
 		t.Fatal("expected error for unknown provider type")
 	}
 }
 
 func TestSESDefaultsToSTARTTLS(t *testing.T) {
-	p, _ := New(model.Provider{Name: "ses", Type: "ses"}, Creds{Username: "u", Password: "p"})
+	p, _ := New(model.Provider{Name: "ses", Type: "ses"}, Creds{Username: "u", Password: "p"}, DefaultTLSPolicy)
 	sp := p.(*SMTPProvider)
 	if sp.cfg.TLSMode != "starttls" {
 		t.Errorf("ses TLSMode=%q want starttls", sp.cfg.TLSMode)

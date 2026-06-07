@@ -147,6 +147,25 @@ func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
 	return out, rows.Err()
 }
 
+// GetTLSPolicies loads all tls_policy rows (per-provider + the global default).
+func (d *DB) GetTLSPolicies(ctx context.Context) ([]model.TLSPolicy, error) {
+	rows, err := d.pool.Query(ctx,
+		`SELECT coalesce(provider_id::text,''), min_version, starttls_required FROM tls_policy`)
+	if err != nil {
+		return nil, fmt.Errorf("query tls policies: %w", err)
+	}
+	defer rows.Close()
+	var out []model.TLSPolicy
+	for rows.Next() {
+		var t model.TLSPolicy
+		if err := rows.Scan(&t.ProviderID, &t.MinVersion, &t.STARTTLSRequired); err != nil {
+			return nil, err
+		}
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // GetActiveDKIMKeys loads active DKIM signing keys (one active selector/domain).
 func (d *DB) GetActiveDKIMKeys(ctx context.Context) ([]model.DKIMKey, error) {
 	rows, err := d.pool.Query(ctx,

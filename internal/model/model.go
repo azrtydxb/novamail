@@ -91,6 +91,14 @@ type MessageMeta struct {
 	SizeBytes int64
 }
 
+// TLSPolicy (tls_policy row) constrains a provider's upstream TLS. ProviderID
+// "" is the global default. MinVersion is "1.2"/"1.3".
+type TLSPolicy struct {
+	ProviderID       string
+	MinVersion       string
+	STARTTLSRequired bool
+}
+
 // DKIMKey is a signing key (dkim_keys row). PrivateRef points at the
 // envelope-encrypted PEM in the secret store.
 type DKIMKey struct {
