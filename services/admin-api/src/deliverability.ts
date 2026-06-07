@@ -121,7 +121,10 @@ export function gradeSpf(txtRecords: string[], requiredIncludes: string[]): Reco
     return { record: "spf", status: "error", found, detail: `Multiple SPF records (${spfs.length}) — only one is allowed; mail will fail SPF.` };
   }
   const spf = spfs[0];
-  const missing = requiredIncludes.filter((inc) => !spf.toLowerCase().includes(inc.toLowerCase()));
+  // Match mechanisms as exact tokens (not substrings) so `include:amazonses.com`
+  // isn't satisfied by `include:amazonses.com.evil.example`.
+  const tokens = spf.trim().split(/\s+/).map((t) => t.toLowerCase());
+  const missing = requiredIncludes.filter((inc) => !tokens.includes(inc.toLowerCase()));
   if (missing.length > 0) {
     const fixed = mergeSpf(spf, missing);
     return { record: "spf", status: "warning", found, detail: `SPF does not authorize NovaMail's route — missing ${missing.join(", ")}.`, expected: fixed, fix: fixed };
@@ -157,6 +160,8 @@ export function gradeDmarc(txtRecords: string[]): RecordReport {
   return { record: "dmarc", status: "ok", found, detail: `DMARC enforcing (p=${p}) with aggregate reporting.` };
 }
 
+// rollup = worst *actionable* status. "info" (e.g. a generic-smtp route we can't
+// auto-verify) is non-problematic, so it folds into "ok" for the domain badge.
 export function rollup(records: RecordReport[]): CheckStatus {
   if (records.some((r) => r.status === "error")) return "error";
   if (records.some((r) => r.status === "warning")) return "warning";
@@ -166,10 +171,26 @@ export function rollup(records: RecordReport[]): CheckStatus {
 // ── Resolution + orchestration (I/O) ──────────────────────────────────────────
 
 function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
-  return Promise.race([
-    p,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error("dns timeout")), ms)),
-  ]);
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<T>((_, reject) => {
+    timer = setTimeout(() => reject(new Error("dns timeout")), ms);
+  });
+  return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
+}
+
+// mapLimit runs fn over items with bounded concurrency, so checking many relay
+// domains doesn't fire an unbounded burst of DNS queries at once.
+async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i]);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return out;
 }
 
 // resolveTxtSafe returns each TXT record as a single joined string. Any failure
@@ -227,26 +248,29 @@ export async function checkDomain(domain: string): Promise<DomainReport> {
 }
 
 export function registerDeliverability(app: FastifyInstance): void {
-  // All relay domains, live (Phase 3 turns this into a cached read).
+  // All relay domains, live (Phase 3 turns this into a cached read). Bounded
+  // concurrency so a large domain list can't burst DNS.
   app.get("/api/deliverability", async () => {
     const { rows } = await pool.query<{ domain: string }>("select domain from relay_domains order by domain");
-    return Promise.all(
-      rows.map((r) =>
-        checkDomain(r.domain).catch(
-          (err): DomainReport => ({
-            domain: r.domain,
-            checkedAt: new Date().toISOString(),
-            status: "error",
-            records: [{ record: "spf", status: "error", found: null, detail: `check failed: ${String(err?.message ?? err)}` }],
-          }),
-        ),
+    return mapLimit(rows, 8, (r) =>
+      checkDomain(r.domain).catch(
+        (err): DomainReport => ({
+          domain: r.domain,
+          checkedAt: new Date().toISOString(),
+          status: "error",
+          records: [{ record: "spf", status: "error", found: null, detail: `check failed: ${String(err?.message ?? err)}` }],
+        }),
       ),
     );
   });
 
-  // Single domain, live — drives "Check now" + card expansion.
-  app.get("/api/deliverability/:domain", async (req) => {
+  // Single domain, live — drives "Check now" + card expansion. Restricted to a
+  // configured relay domain so the endpoint can't be used to resolve arbitrary
+  // names.
+  app.get("/api/deliverability/:domain", async (req, reply) => {
     const domain = (req.params as { domain: string }).domain;
+    const { rowCount } = await pool.query("select 1 from relay_domains where domain = $1", [domain]);
+    if (!rowCount) return reply.code(404).send({ error: "unknown relay domain" });
     return checkDomain(domain);
   });
 }

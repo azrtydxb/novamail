@@ -25,7 +25,10 @@ function DelivRecord({ r }) {
         {r.fix && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 6 }}>
             <span className="mono" style={{ fontSize: 11, color: 'var(--accent-good)', wordBreak: 'break-all', flex: 1 }}>fix: {r.fix}</span>
-            <Btn size="sm" icon={<I.Copy size={12} />} onClick={() => { navigator.clipboard?.writeText(r.fix); window.nmToast('Copied fix', 'good'); }}>copy</Btn>
+            <Btn size="sm" icon={<I.Copy size={12} />} onClick={async () => {
+              try { await navigator.clipboard.writeText(r.fix); window.nmToast('Copied fix', 'good'); }
+              catch { window.nmToast('Copy failed — select and copy manually', 'danger'); }
+            }}>copy</Btn>
           </div>
         )}
       </div>
@@ -34,8 +37,10 @@ function DelivRecord({ r }) {
 }
 
 function DelivCard({ report, onCheck, checking }) {
-  // Default-open anything that isn't healthy, so issues are visible at a glance.
+  // Open anything that isn't healthy so issues are visible — also after a
+  // re-check flips a domain from ok → warning/error.
   const [open, setOpen] = useDelivState(report.status !== 'ok');
+  useDelivEffect(() => { if (report.status !== 'ok') setOpen(true); }, [report.status]);
   const recs = report.records || [];
   return (
     <Card pad={0}>

@@ -54,6 +54,11 @@ test("gradeSpf: present but missing include → warning, fix inserts before all"
   assert.equal(r.fix, "v=spf1 include:_spf.google.com include:amazonses.com ~all");
 });
 
+test("gradeSpf: required include must match as a whole token, not a substring", () => {
+  const r = gradeSpf(["v=spf1 include:amazonses.com.evil.example -all"], ["include:amazonses.com"]);
+  assert.equal(r.status, "warning"); // the look-alike does not satisfy the requirement
+});
+
 test("gradeSpf: more than one SPF record → error", () => {
   assert.equal(gradeSpf(["v=spf1 -all", "v=spf1 include:amazonses.com -all"], []).status, "error");
 });
