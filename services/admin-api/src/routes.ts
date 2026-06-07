@@ -88,6 +88,9 @@ export function registerRoutes(app: FastifyInstance): void {
     try {
       const res = await fetch(`${deliveryURL}/test/${encodeURIComponent(id)}`, {
         method: "GET",
+        // Shared-secret auth for the delivery /test endpoint (it triggers outbound
+        // SMTP dials and must not be open to the cluster).
+        headers: { "X-Internal-Auth": process.env.NOVAMAIL_ADMIN_API_KEY ?? "" },
         signal: AbortSignal.timeout(20000),
       });
       const body = (await res.json()) as { ok?: boolean };

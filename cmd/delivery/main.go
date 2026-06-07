@@ -525,9 +525,18 @@ func serveHealth(addr string, database *db.DB, bus *amqp.Conn, wk *worker, logge
 		_, _ = io.WriteString(w, "ok")
 	})
 	// Test a provider's connectivity + auth without sending (Admin API action).
+	// This triggers outbound SMTP dials, so it must not be callable by anything
+	// in-cluster: require the shared admin token (the Admin API forwards it).
+	// Fail closed if no token is configured.
+	testToken := os.Getenv("NOVAMAIL_ADMIN_API_KEY")
 	mux.HandleFunc("/test/", func(w http.ResponseWriter, r *http.Request) {
-		id := strings.TrimPrefix(r.URL.Path, "/test/")
 		w.Header().Set("Content-Type", "application/json")
+		if testToken == "" || r.Header.Get("X-Internal-Auth") != testToken {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "unauthorized"})
+			return
+		}
+		id := strings.TrimPrefix(r.URL.Path, "/test/")
 		st := wk.state.Load()
 		p, ok := st.instances[id]
 		if !ok {

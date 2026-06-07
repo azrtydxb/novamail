@@ -53,6 +53,13 @@ spec:
             - name: {{ $k }}
               value: {{ $v | quote }}
             {{- end }}
+            # Shared secret to authenticate the /test endpoint (Admin API forwards it).
+            - name: NOVAMAIL_ADMIN_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.adminApi.apiKeySecret }}
+                  key: NOVAMAIL_ADMIN_API_KEY
+                  optional: true
             - name: NOVAMAIL_SECRET_KEY
               valueFrom:
                 secretKeyRef:
