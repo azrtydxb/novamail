@@ -52,7 +52,7 @@ The two planes communicate **only** through (a) the shared Postgres schema and (
 
 ## Hard constraints (do not violate without updating the spec)
 
-- **Relay only — no direct-to-MX delivery.** Every message exits via an authenticated upstream provider. This is explicitly out of scope for v1; do not add IP-warmup, PTR/rDNS, port-25 egress, or MTA-STS/DANE sender enforcement.
+- **Relay by default; direct-to-MX is now an opt-in provider (v2).** Most messages exit via an authenticated upstream provider. A provider of type `direct` (`internal/providers/direct.go`) is also supported: it resolves the recipient domain's MX per message and delivers on port 25 with opportunistic STARTTLS (RFC 7435, unverified). It is **only used when a `direct` provider is configured and routed to** — the relay path is unchanged otherwise. Operational requirements for direct delivery: **outbound port-25 egress**, a real EHLO FQDN with matching forward + reverse (PTR) DNS (`NOVAMAIL_DELIVERY_HELO` / `delivery.directHelo`), and good sending-IP reputation. IP-warmup automation and MTA-STS/DANE sender enforcement remain out of scope.
 - **Postgres is the single source of truth** for operational config. No app config in CRDs, ConfigMaps, or files. The only sanctioned CRDs are cert-manager's (ACME/TLS) and standard service discovery. No SQLite path.
 - **The work queue lives in RabbitMQ, not Postgres.** Postgres holds config, message metadata, message bodies, and audit.
 - **The bus carries references, not blobs.** Message bodies live in the body store; jobs and `config.changed` events stay small and reference bodies by ID (claim-check).

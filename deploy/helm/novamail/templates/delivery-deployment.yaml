@@ -51,6 +51,11 @@ spec:
           env:
             - name: NOVAMAIL_DELIVERY_CONCURRENCY
               value: {{ .Values.delivery.concurrency | default 16 | quote }}
+            {{- if .Values.delivery.directHelo }}
+            # EHLO name for direct-to-MX delivery (must be a real FQDN with PTR).
+            - name: NOVAMAIL_DELIVERY_HELO
+              value: {{ .Values.delivery.directHelo | quote }}
+            {{- end }}
             {{- include "novamail.tracingEnv" . | nindent 12 }}
             {{- range $k, $v := .Values.delivery.env }}
             - name: {{ $k }}
