@@ -12,13 +12,18 @@ metadata:
   name: novamail-deployer
   namespace: novamail
 rules:
-  # NOTE: `secrets` keeps broad verbs because Helm 3 stores release state in
-  # Secrets (sh.helm.release.*) in this namespace, so the deployer must
-  # create/update/delete them. Properly least-privileging app-secret access
-  # requires switching Helm to the configmap storage driver first (follow-up).
   - apiGroups: [""]
-    resources: [services, persistentvolumeclaims, configmaps, secrets, serviceaccounts, pods, events, endpoints]
+    resources: [services, persistentvolumeclaims, configmaps, serviceaccounts, pods, events, endpoints]
     verbs: ["*"]
+  # Least privilege: Helm release state now lives in ConfigMaps
+  # (HELM_DRIVER=configmap), so the deployer only needs to READ Secrets (the e2e
+  # smoke reads the PG password). A compromised runner can't exfiltrate/rotate
+  # app credentials or the KEK. NOTE: apply this only AFTER the first
+  # configmap-driver deploy succeeds, else an in-flight secrets-driver deploy
+  # can't write its release Secret.
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: ["get", "list", "watch"]
   # pods/exec + pods/log: the post-deploy relay smoke (test/e2e) submits from an
   # ephemeral pod and verifies the message status via psql exec.
   - apiGroups: [""]
