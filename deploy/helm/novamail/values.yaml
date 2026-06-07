@@ -68,6 +68,9 @@ dsn:
 adminApi:
   enabled: true
   replicas: 2
+  # From-address for email deliverability alerts (Phase 4). Must be a permitted
+  # relay sender domain. Empty ⇒ email alert channels report "not configured".
+  alertFrom: ""
   autoscaling:
     enabled: true
     minReplicas: 2
@@ -229,3 +232,7 @@ amqpmtls:
 tracing:
   enabled: true
   otlpEndpoint: "jaeger.observability:4317"
+
+# Deliverability checks (Phase 3/4): periodic refresh interval (hours).
+deliverability:
+  intervalHours: 6
