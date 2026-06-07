@@ -7,6 +7,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -65,6 +66,14 @@ func env(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// tlsVersion maps a tls_policy.min_version string to a crypto/tls constant.
+func tlsVersion(s string) uint16 {
+	if s == "1.3" {
+		return tls.VersionTLS13
+	}
+	return tls.VersionTLS12
 }
 
 func main() {
@@ -401,9 +410,29 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 			provSpecs = append(provSpecs, spec)
 		}
 	}
+	// Resolve TLS policy per provider (per-provider row overrides the global "" row).
+	tlsPols, perr := database.GetTLSPolicies(ctx)
+	if perr != nil {
+		logger.Error("load tls policies", "err", perr)
+	}
+	globalPol := providers.DefaultTLSPolicy
+	byProvider := map[string]providers.TLSPolicy{}
+	for _, t := range tlsPols {
+		pol := providers.TLSPolicy{MinVersion: tlsVersion(t.MinVersion), STARTTLSRequired: t.STARTTLSRequired}
+		if t.ProviderID == "" {
+			globalPol = pol
+		} else {
+			byProvider[t.ProviderID] = pol
+		}
+	}
+
 	instances := make(map[string]providers.Provider, len(provs))
 	for _, p := range provs {
-		inst, err := providers.New(p, resolveCreds(ctx, database, cipher, secretDir, p.SecretRef))
+		pol := globalPol
+		if pp, ok := byProvider[p.ID]; ok {
+			pol = pp
+		}
+		inst, err := providers.New(p, resolveCreds(ctx, database, cipher, secretDir, p.SecretRef), pol)
 		if err != nil {
 			logger.Error("build provider", "err", err, "provider", p.Name)
 			continue
