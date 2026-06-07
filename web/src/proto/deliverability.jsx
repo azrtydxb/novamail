@@ -9,7 +9,8 @@ const { useState: useDelivState, useEffect: useDelivEffect } = React;
 // Map our check statuses onto existing tone/status vocabularies.
 const DELIV_DOT = { ok: 'healthy', warning: 'degraded', error: 'failed', info: 'queued' };
 const DELIV_TONE = { ok: 'good', warning: 'warn', error: 'danger', info: 'accent' };
-const REC_LABEL = { spf: 'SPF', dkim: 'DKIM', dmarc: 'DMARC' };
+const REC_LABEL = { spf: 'SPF', dkim: 'DKIM', dmarc: 'DMARC', mx: 'MX', mta_sts: 'MTA-STS', bimi: 'BIMI', tls_rpt: 'TLS-RPT' };
+const AUTH_RECORDS = ['spf', 'dkim', 'dmarc']; // required; the rest are hygiene
 
 function DelivRecord({ r }) {
   return (
@@ -42,20 +43,32 @@ function DelivCard({ report, onCheck, checking }) {
   const [open, setOpen] = useDelivState(report.status !== 'ok');
   useDelivEffect(() => { if (report.status !== 'ok') setOpen(true); }, [report.status]);
   const recs = report.records || [];
+  const auth = recs.filter((r) => AUTH_RECORDS.includes(r.record));
+  const hygiene = recs.filter((r) => !AUTH_RECORDS.includes(r.record));
+  const SubHead = ({ children }) => (
+    <div className="mono" style={{ fontSize: 10, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--fg-4)', padding: '10px 0 2px' }}>{children}</div>
+  );
   return (
     <Card pad={0}>
       <div onClick={() => setOpen((o) => !o)} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '13px 16px', cursor: 'pointer' }}>
         <StatusDot status={DELIV_DOT[report.status]} pulse={report.status === 'ok'} />
         <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--fg)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' }}>{report.domain}</span>
         <div style={{ display: 'flex', gap: 6 }}>
-          {recs.map((r, i) => <Pill key={i} tone={DELIV_TONE[r.status] || 'muted'}>{REC_LABEL[r.record] || r.record}</Pill>)}
+          {auth.map((r, i) => <Pill key={i} tone={DELIV_TONE[r.status] || 'muted'}>{REC_LABEL[r.record] || r.record}</Pill>)}
         </div>
         <span onClick={(e) => e.stopPropagation()} style={{ display: 'flex' }}>
           <IconBtn size={26} title="Check now" active={checking} onClick={() => onCheck(report.domain)}><I.Refresh size={13} /></IconBtn>
         </span>
         <I.ChevronD size={14} style={{ color: 'var(--fg-3)', transform: open ? 'rotate(180deg)' : 'none', transition: 'transform 140ms' }} />
       </div>
-      {open && <div style={{ padding: '0 16px 10px' }}>{recs.map((r, i) => <DelivRecord key={i} r={r} />)}</div>}
+      {open && (
+        <div style={{ padding: '0 16px 10px' }}>
+          <SubHead>Authentication (required)</SubHead>
+          {auth.map((r, i) => <DelivRecord key={i} r={r} />)}
+          {hygiene.length > 0 && <SubHead>Hygiene &amp; reporting</SubHead>}
+          {hygiene.map((r, i) => <DelivRecord key={i} r={r} />)}
+        </div>
+      )}
     </Card>
   );
 }

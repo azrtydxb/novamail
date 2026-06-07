@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { gradeDkim, gradeSpf, gradeDmarc, providerMechanism, rollup } from "./deliverability.js";
+import { gradeDkim, gradeSpf, gradeDmarc, providerMechanism, rollup, gradeMx, gradeTlsRpt, gradeMtaSts, gradeBimi } from "./deliverability.js";
 
 const KEY = "MIIBIjANBgkqExamplePublicKeyBase64==";
 
@@ -75,6 +75,30 @@ test("gradeDmarc: missing → error; p=none → warning; p=reject+rua → ok", (
 
 test("gradeDmarc: enforcing but no rua → warning", () => {
   assert.equal(gradeDmarc(["v=DMARC1; p=quarantine"]).status, "warning");
+});
+
+test("gradeMx: present → info; absent → info (not required for relay)", () => {
+  assert.equal(gradeMx(["mx1.example.com", "mx2.example.com"]).status, "info");
+  assert.equal(gradeMx([]).status, "info");
+});
+
+test("gradeTlsRpt: present → info; absent → info", () => {
+  assert.equal(gradeTlsRpt(["v=TLSRPTv1; rua=mailto:t@example.com"]).status, "info");
+  assert.equal(gradeTlsRpt([]).status, "info");
+});
+
+test("gradeMtaSts: enforce → info; TXT but no policy → warning; absent → info", () => {
+  assert.equal(gradeMtaSts("v=STSv1; id=1", "version: STSv1\nmode: enforce\nmx: a\nmax_age: 86400").status, "info");
+  assert.equal(gradeMtaSts("v=STSv1; id=1", null).status, "warning");
+  assert.equal(gradeMtaSts("v=STSv1; id=1", "version: STSv1\nmode: none").status, "warning");
+  assert.equal(gradeMtaSts(null, null).status, "info");
+});
+
+test("gradeBimi: needs logo + enforcing DMARC", () => {
+  assert.equal(gradeBimi(null, true).status, "info");
+  assert.equal(gradeBimi("v=BIMI1; l=https://x/logo.svg", true).status, "info");
+  assert.equal(gradeBimi("v=BIMI1; l=https://x/logo.svg", false).status, "warning"); // DMARC not enforcing
+  assert.equal(gradeBimi("v=BIMI1;", true).status, "warning"); // no logo
 });
 
 test("rollup picks the worst status", () => {

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { promises as dns } from "node:dns";
+import { isIP } from "node:net";
 import { pool } from "./db.js";
 
 // Deliverability checks (Phase 1): resolve and grade a relay domain's email-auth
@@ -12,7 +13,7 @@ import { pool } from "./db.js";
 export type CheckStatus = "ok" | "warning" | "error" | "info";
 
 export interface RecordReport {
-  record: "spf" | "dkim" | "dmarc";
+  record: "spf" | "dkim" | "dmarc" | "mx" | "mta_sts" | "bimi" | "tls_rpt";
   selector?: string;
   status: CheckStatus;
   found: string | null; // what's published (joined TXT), or null if absent
@@ -160,8 +161,54 @@ export function gradeDmarc(txtRecords: string[]): RecordReport {
   return { record: "dmarc", status: "ok", found, detail: `DMARC enforcing (p=${p}) with aggregate reporting.` };
 }
 
+// ── Hygiene records (receiving-side / reporting — informational for relay) ─────
+
+export function gradeMx(exchanges: string[]): RecordReport {
+  if (exchanges.length === 0) {
+    return { record: "mx", status: "info", found: null, detail: "No MX — this domain can't receive bounces or replies. Not required for relay-only sending." };
+  }
+  return { record: "mx", status: "info", found: exchanges.join(", "), detail: `MX present (${exchanges.length} host${exchanges.length > 1 ? "s" : ""}).` };
+}
+
+export function gradeTlsRpt(txtRecords: string[]): RecordReport {
+  const rec = txtRecords.find((r) => /^v=TLSRPTv1\b/i.test(r.trim())) ?? null;
+  if (!rec) {
+    return { record: "tls_rpt", status: "info", found: null, detail: "No TLS-RPT record — no reports of inbound TLS delivery failures (optional)." };
+  }
+  return { record: "tls_rpt", status: "info", found: rec, detail: "TLS-RPT present." };
+}
+
+// gradeMtaSts grades the _mta-sts TXT plus the fetched policy file (null if the
+// fetch failed / was blocked). A TXT with no reachable policy is a real misconfig.
+export function gradeMtaSts(txt: string | null, policy: string | null): RecordReport {
+  if (!txt) {
+    return { record: "mta_sts", status: "info", found: null, detail: "No MTA-STS record — inbound TLS isn't enforced via MTA-STS (optional, receiving-side)." };
+  }
+  if (!policy) {
+    return { record: "mta_sts", status: "warning", found: txt, detail: "MTA-STS DNS record present but its policy file (https://mta-sts.<domain>/.well-known/mta-sts.txt) is unreachable or invalid." };
+  }
+  const mode = (policy.match(/mode:\s*(\w+)/i)?.[1] ?? "").toLowerCase();
+  if (mode === "enforce") return { record: "mta_sts", status: "info", found: txt, detail: "MTA-STS enforcing." };
+  if (mode === "testing") return { record: "mta_sts", status: "info", found: txt, detail: "MTA-STS in testing mode (not yet enforcing)." };
+  return { record: "mta_sts", status: "warning", found: txt, detail: `MTA-STS policy mode=${mode || "(none)"} — not enforcing.` };
+}
+
+export function gradeBimi(txt: string | null, dmarcEnforcing: boolean): RecordReport {
+  if (!txt) {
+    return { record: "bimi", status: "info", found: null, detail: "No BIMI record (optional brand-logo feature)." };
+  }
+  if (!extractTag(txt, "l")) {
+    return { record: "bimi", status: "warning", found: txt, detail: "BIMI record present but has no logo (l=) URL." };
+  }
+  if (!dmarcEnforcing) {
+    return { record: "bimi", status: "warning", found: txt, detail: "BIMI needs an enforcing DMARC policy (quarantine/reject) before logos display." };
+  }
+  return { record: "bimi", status: "info", found: txt, detail: "BIMI present with a logo URL." };
+}
+
 // rollup = worst *actionable* status. "info" (e.g. a generic-smtp route we can't
-// auto-verify) is non-problematic, so it folds into "ok" for the domain badge.
+// auto-verify, or an optional hygiene record) is non-problematic, so it folds
+// into "ok" for the domain badge.
 export function rollup(records: RecordReport[]): CheckStatus {
   if (records.some((r) => r.status === "error")) return "error";
   if (records.some((r) => r.status === "warning")) return "warning";
@@ -205,6 +252,76 @@ async function resolveTxtSafe(name: string): Promise<string[]> {
   }
 }
 
+async function resolveMxSafe(name: string): Promise<string[]> {
+  try {
+    const mx = await withTimeout(dns.resolveMx(name), 5000);
+    return mx.sort((a, b) => a.priority - b.priority).map((m) => m.exchange);
+  } catch {
+    return [];
+  }
+}
+
+// isPrivateAddr blocks SSRF targets: loopback / RFC1918 / link-local (incl. the
+// cloud metadata IP) / IPv6 ULA + mapped equivalents.
+function isPrivateAddr(ip: string): boolean {
+  if (isIP(ip) === 4) {
+    const o = ip.split(".").map(Number);
+    if (o[0] === 0 || o[0] === 10 || o[0] === 127) return true;
+    if (o[0] === 172 && o[1] >= 16 && o[1] <= 31) return true;
+    if (o[0] === 192 && o[1] === 168) return true;
+    if (o[0] === 169 && o[1] === 254) return true; // link-local + 169.254.169.254 metadata
+    return false;
+  }
+  const a = ip.toLowerCase();
+  if (a === "::1" || a === "::") return true;
+  if (/^fe[89ab]/.test(a)) return true; // link-local fe80::/10 (fe80–febf)
+  if (/^f[cd]/.test(a)) return true; // unique local fc00::/7
+  if (a.startsWith("::ffff:")) return isPrivateAddr(a.slice(7)); // IPv4-mapped
+  return false;
+}
+
+// hostnameRe bounds the domain to a plausible DNS name before it's interpolated
+// into a fetch URL (relay_domains.domain is free text).
+const hostnameRe = /^(?=.{1,253}$)([a-z0-9](-?[a-z0-9])*\.)+[a-z]{2,}$/i;
+
+// safeFetchText fetches a small text file over HTTPS for MTA-STS, with an SSRF
+// guard: HTTPS only, resolved host must not be an internal IP, no redirects,
+// bounded time + size. (Residual DNS-rebinding window is accepted — the target
+// is a fixed well-known path and the impact is reading a public policy file.)
+async function safeFetchText(url: string, maxBytes = 64 * 1024, timeoutMs = 5000): Promise<string | null> {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (u.protocol !== "https:" || !hostnameRe.test(u.hostname)) return null;
+  try {
+    const addrs = (await withTimeout(dns.lookup(u.hostname, { all: true }), timeoutMs)).map((a) => a.address);
+    if (addrs.length === 0 || addrs.some(isPrivateAddr)) return null;
+    const res = await fetch(url, { redirect: "error", signal: AbortSignal.timeout(timeoutMs) });
+    if (!res.ok || !res.body) return null;
+    // Bounded read: stop as soon as we exceed maxBytes rather than buffering an
+    // arbitrarily large (possibly hostile) response into memory.
+    const reader = res.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.length;
+      if (size > maxBytes) {
+        await reader.cancel();
+        return null;
+      }
+      chunks.push(value);
+    }
+    return Buffer.concat(chunks).toString("utf8");
+  } catch {
+    return null;
+  }
+}
+
 // routedProviderTypes approximates the Go routing precedence for SPF: the
 // provider types this sender domain can route through (its sender-domain rule's
 // chain, else all enabled providers).
@@ -242,7 +359,20 @@ export async function checkDomain(domain: string): Promise<DomainReport> {
   records.push(gradeSpf(await resolveTxtSafe(domain), required));
 
   // DMARC.
-  records.push(gradeDmarc(await resolveTxtSafe(`_dmarc.${domain}`)));
+  const dmarcTxts = await resolveTxtSafe(`_dmarc.${domain}`);
+  records.push(gradeDmarc(dmarcTxts));
+  const dmarcEnforcing = dmarcTxts.some((r) => /p\s*=\s*(quarantine|reject)/i.test(r));
+
+  // Hygiene & reporting (receiving-side / optional).
+  records.push(gradeMx(await resolveMxSafe(domain)));
+  records.push(gradeTlsRpt(await resolveTxtSafe(`_smtp._tls.${domain}`)));
+
+  const stsTxt = (await resolveTxtSafe(`_mta-sts.${domain}`)).find((r) => /^v=STSv1\b/i.test(r.trim())) ?? null;
+  const stsPolicy = stsTxt ? await safeFetchText(`https://mta-sts.${domain}/.well-known/mta-sts.txt`) : null;
+  records.push(gradeMtaSts(stsTxt, stsPolicy));
+
+  const bimiTxt = (await resolveTxtSafe(`default._bimi.${domain}`)).find((r) => /^v=BIMI1\b/i.test(r.trim())) ?? null;
+  records.push(gradeBimi(bimiTxt, dmarcEnforcing));
 
   return { domain, checkedAt: new Date().toISOString(), status: rollup(records), records };
 }
