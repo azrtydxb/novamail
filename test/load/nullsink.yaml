@@ -1,0 +1,88 @@
+# Fast SMTP null-sink for load testing the relay's true ceiling: accepts and
+# discards every message with minimal latency (no storage, no UI, no TLS/AUTH) so
+# the measured throughput reflects the RELAY, not the sink. Pure-stdlib asyncio
+# (no pip install). Not part of the product — test harness only.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nullsink-src
+  namespace: novamail
+data:
+  sink.py: |
+    import asyncio
+
+    async def handle(reader, writer):
+        async def send(s):
+            writer.write(s.encode()); await writer.drain()
+        try:
+            await send("220 nullsink\r\n")
+            while True:
+                line = await reader.readline()
+                if not line:
+                    break
+                cmd = line[:4].upper()
+                if cmd == b"DATA":
+                    await send("354 go\r\n")
+                    while True:
+                        d = await reader.readline()
+                        if not d or d == b".\r\n" or d == b".\n":
+                            break
+                    await send("250 ok\r\n")
+                elif cmd == b"QUIT":
+                    await send("221 bye\r\n"); break
+                elif cmd == b"EHLO" or cmd == b"HELO":
+                    await send("250 nullsink\r\n")  # advertise no extensions
+                else:  # MAIL, RCPT, RSET, NOOP, ...
+                    await send("250 ok\r\n")
+        except Exception:
+            pass
+        finally:
+            try:
+                writer.close()
+            except Exception:
+                pass
+
+    async def main():
+        srv = await asyncio.start_server(handle, "0.0.0.0", 1025)
+        async with srv:
+            await srv.serve_forever()
+
+    asyncio.run(main())
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: novamail-nullsink
+  namespace: novamail
+spec:
+  replicas: 3
+  selector:
+    matchLabels: { app: novamail-nullsink }
+  template:
+    metadata:
+      labels: { app: novamail-nullsink }
+    spec:
+      containers:
+        - name: sink
+          image: python:3.12-alpine
+          command: ["python3", "/app/sink.py"]
+          ports:
+            - containerPort: 1025
+          volumeMounts:
+            - { name: src, mountPath: /app }
+          resources:
+            requests: { cpu: 100m, memory: 32Mi }
+            limits: { cpu: "1", memory: 128Mi }
+      volumes:
+        - name: src
+          configMap: { name: nullsink-src }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: novamail-nullsink
+  namespace: novamail
+spec:
+  selector: { app: novamail-nullsink }
+  ports:
+    - { port: 1025, targetPort: 1025 }
