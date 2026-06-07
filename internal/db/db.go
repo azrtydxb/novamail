@@ -150,7 +150,11 @@ func (d *DB) GetRateLimits(ctx context.Context) ([]model.RateLimit, error) {
 // GetTLSPolicies loads all tls_policy rows (per-provider + the global default).
 func (d *DB) GetTLSPolicies(ctx context.Context) ([]model.TLSPolicy, error) {
 	rows, err := d.pool.Query(ctx,
-		`SELECT coalesce(provider_id::text,''), min_version, starttls_required FROM tls_policy`)
+		// Deterministic order (global row first, then per-provider) so resolving
+		// "global default + per-provider override" is stable even if the table
+		// accidentally holds duplicate rows for a provider.
+		`SELECT coalesce(provider_id::text,''), min_version, starttls_required
+		   FROM tls_policy ORDER BY provider_id NULLS FIRST`)
 	if err != nil {
 		return nil, fmt.Errorf("query tls policies: %w", err)
 	}

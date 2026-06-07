@@ -91,14 +91,21 @@ export async function getMetrics() {
     providerHealth[r.provider] = { lastUsed: r.last, status: r.kind === "relayed" ? "healthy" : "degraded" };
   }
 
-  // per-sender-domain message volume (24h), derived from MAIL FROM.
+  // per-sender-domain message volume (24h), derived from MAIL FROM. Require an
+  // '@' so the null sender (<>) and other address-less values don't pile into an
+  // empty-string "domain".
   const dv = await pool.query<{ d: string; n: string }>(
     `SELECT lower(split_part(mail_from,'@',2)) d, count(*) n
-       FROM messages WHERE created_at > now() - interval '24 hours' AND mail_from <> ''
+       FROM messages WHERE created_at > now() - interval '24 hours' AND mail_from LIKE '%@_%'
        GROUP BY d`,
   );
   const domainVolume: Record<string, number> = {};
   for (const r of dv.rows) domainVolume[r.d] = Number(r.n);
+
+  // dkimSigned: reflect whether DKIM signing is actually configured (an active
+  // key exists) rather than asserting 100% unconditionally.
+  const dk = await pool.query<{ n: string }>("SELECT count(*) n FROM dkim_keys WHERE rotation = 'active'");
+  const dkimSigned = Number(dk.rows[0]?.n ?? 0) > 0 ? 100 : 0;
 
   // queue depth + cluster nodes from RabbitMQ management
   const queues = await getQueues();
@@ -116,8 +123,8 @@ export async function getMetrics() {
       relayed24h: relayed, deferred24h: deferred, bounced24h: bounced,
       // NOTE: send latency is exported as a Prometheus histogram
       // (novamail_delivery_send_seconds) for Grafana; we don't fabricate p50/p95
-      // here. dkimSigned reflects that all outbound mail is DKIM-signed.
-      acceptRate: Math.round(acceptRate * 100) / 100, queueDepth, dkimSigned: 100,
+      // here. dkimSigned reflects whether DKIM signing is configured (active key).
+      acceptRate: Math.round(acceptRate * 100) / 100, queueDepth, dkimSigned,
     },
     series: S,
     providerVolume,
