@@ -18,7 +18,7 @@ spec:
   tls:
     secretName: nova-bus-server-tls
     caSecretName: nova-bus-ca
-    disableNonTLSListeners: false
+    disableNonTLSListeners: true
   persistence:
     storageClassName: longhorn
     storage: 5Gi
