@@ -86,6 +86,9 @@ func (p *DirectProvider) Send(ctx context.Context, m *Message) (Result, error) {
 	if domain == "" {
 		return Result{Outcome: Fail, Detail: "no recipient domain"}, fmt.Errorf("direct: empty recipient domain")
 	}
+	// Buffer the body so it can be replayed across MX hosts on failover. Bounded
+	// by the ingest message-size cap; with N concurrent handlers that is N×cap of
+	// peak memory (the relay path streams instead, but it has no MX failover).
 	body, err := io.ReadAll(m.Body)
 	if err != nil {
 		return Result{Outcome: Defer, Detail: err.Error()}, fmt.Errorf("direct: read body: %w", err)
@@ -134,14 +137,18 @@ func (p *DirectProvider) deliverTo(ctx context.Context, addr, host, from string,
 	if err := c.Hello(p.helo()); err != nil {
 		return classifyDirect(err)
 	}
-	// Opportunistic STARTTLS (RFC 7435): upgrade if offered, unverified, never
-	// downgrade-fail (many MX still don't offer it).
+	// Opportunistic STARTTLS (RFC 7435): upgrade if the MX offers it. If it's
+	// offered but the handshake fails, Defer rather than continue — the session is
+	// left mid-STARTTLS so we can't safely fall back to plaintext, and proceeding
+	// would risk a silent downgrade. MX that don't offer STARTTLS get plaintext.
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		minVer := p.cfg.MinTLSVersion
 		if minVer == 0 {
 			minVer = tls.VersionTLS12
 		}
-		_ = c.StartTLS(&tls.Config{ServerName: host, InsecureSkipVerify: true, MinVersion: minVer}) //nolint:gosec // opportunistic TLS: encrypt when possible
+		if err := c.StartTLS(&tls.Config{ServerName: host, InsecureSkipVerify: true, MinVersion: minVer}); err != nil { //nolint:gosec // opportunistic TLS: unverified by design (RFC 7435)
+			return Result{Outcome: Defer, Detail: "STARTTLS failed: " + err.Error()}, err
+		}
 	}
 	if err := c.Mail(from); err != nil {
 		return classifyDirect(err)

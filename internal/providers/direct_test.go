@@ -125,6 +125,19 @@ func TestDirectDeliverTo_Unreachable(t *testing.T) {
 	}
 }
 
+func TestFactoryBuildsDirect(t *testing.T) {
+	p, err := New(model.Provider{Name: "mx", Type: "direct"}, Creds{}, DefaultTLSPolicy)
+	if err != nil {
+		t.Fatalf("New(direct): %v", err)
+	}
+	if _, ok := p.(*DirectProvider); !ok {
+		t.Fatalf("New(direct) returned %T, want *DirectProvider", p)
+	}
+	if p.Name() != "mx" {
+		t.Errorf("Name()=%q want mx", p.Name())
+	}
+}
+
 func TestDirectSend_NoRecipient(t *testing.T) {
 	p := NewDirect(DirectConfig{Name: "direct"})
 	res, _ := p.Send(context.Background(), &Message{Envelope: model.Envelope{MailFrom: "a@b.c", RcptTo: nil}, Body: strings.NewReader("x")})
