@@ -20,6 +20,7 @@ function Sidebar({ route, onNavigate, onCollapse, onOpenPalette, queueDepth }) {
     { group: 'outgoing', items: [
       { id: 'providers', label: 'Providers', icon: <I.Server size={15} />, hint: PROVIDERS.filter(p => p.enabled).length },
       { id: 'dkim', label: 'DKIM keys', icon: <I.Shield size={15} /> },
+      { id: 'deliverability', label: 'Deliverability', icon: <I.Activity size={15} /> },
       { id: 'ratelimits_out', label: 'Outbound limits', icon: <I.Gauge size={15} /> },
     ]},
     { group: 'observe', items: [

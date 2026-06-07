@@ -18,7 +18,7 @@ const ROUTE_TITLE = {
   dashboard: 'dashboard', messages: 'messages', queue: 'queue', providers: 'providers',
   rules: 'routing-rules', domains: 'relay-domains', accounts: 'accounts', settings: 'settings',
   ratelimits_in: 'inbound-limits', ratelimits_out: 'outbound-limits', relayclients: 'relay-clients',
-  dkim: 'dkim-keys', suppressions: 'suppressions', audit: 'audit-log', operators: 'operators',
+  dkim: 'dkim-keys', deliverability: 'deliverability', suppressions: 'suppressions', audit: 'audit-log', operators: 'operators',
 };
 
 function usePrefs() {
@@ -189,6 +189,7 @@ function App() {
   else if (route === 'accounts') main = <Accounts />;
   else if (route === 'relayclients') main = <RelayClients />;
   else if (route === 'dkim') main = <DKIMKeys />;
+  else if (route === 'deliverability') main = <Deliverability />;
   else if (route === 'suppressions') main = <Suppressions />;
   else if (route === 'audit') main = <AuditLog />;
   else if (route === 'operators') main = <Operators />;
