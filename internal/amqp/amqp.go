@@ -9,8 +9,11 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	amqp "github.com/rabbitmq/amqp091-go"
@@ -57,30 +60,152 @@ func TierForAttempt(attempt int) (WaitTier, bool) {
 	return WaitTiers[idx], true
 }
 
-// Conn is a RabbitMQ connection with a channel for the data plane.
-type Conn struct {
-	conn *amqp.Connection
-	ch   *amqp.Channel
+// consumer is a registered subscription, re-established on every reconnect. out
+// is the stable channel handed to the caller; it never closes across reconnects
+// so the caller's range loop survives a broker restart.
+type consumer struct {
+	queue    string
+	prefetch int
+	out      chan amqp.Delivery
 }
 
-// Dial connects and declares the relay topology (idempotent). For an amqps://
-// URL it builds a TLS config from the mounted CA (+ client cert for mutual TLS)
-// so the bus connection is verified and client-authenticated.
-func Dial(url string) (*Conn, error) {
-	conn, err := dialBus(url)
+// Conn is a self-healing RabbitMQ connection for the data plane. amqp091 does
+// not auto-reconnect, so a supervisor watches the connection and, on loss,
+// redials with backoff, re-declares the topology, and re-establishes every
+// registered consumer + config subscription. Publishers retry across the gap.
+type Conn struct {
+	url string
+	log *slog.Logger
+
+	mu   sync.RWMutex // guards conn/ch (swapped on reconnect)
+	conn *amqp.Connection
+	ch   *amqp.Channel
+
+	closed atomic.Bool
+
+	regMu          sync.Mutex // guards the registries below
+	consumers      []*consumer
+	configHandlers []func([]byte)
+}
+
+// Dial connects, declares the relay topology, and starts the reconnect
+// supervisor. For an amqps:// URL it builds a TLS config from the mounted CA
+// (+ client cert for mutual TLS) so the bus connection is verified and
+// client-authenticated.
+func Dial(url string, log *slog.Logger) (*Conn, error) {
+	if log == nil {
+		log = slog.Default()
+	}
+	c := &Conn{url: url, log: log}
+	if err := c.connect(); err != nil {
+		return nil, err
+	}
+	go c.supervise()
+	return c, nil
+}
+
+// connect (re)establishes the connection + channel and re-declares the topology.
+func (c *Conn) connect() error {
+	conn, err := dialBus(c.url)
 	if err != nil {
-		return nil, fmt.Errorf("amqp dial: %w", err)
+		return fmt.Errorf("amqp dial: %w", err)
 	}
 	ch, err := conn.Channel()
 	if err != nil {
 		_ = conn.Close()
-		return nil, fmt.Errorf("amqp channel: %w", err)
+		return fmt.Errorf("amqp channel: %w", err)
 	}
 	if err := declare(ch); err != nil {
 		_ = conn.Close()
-		return nil, err
+		return err
 	}
-	return &Conn{conn: conn, ch: ch}, nil
+	c.mu.Lock()
+	c.conn, c.ch = conn, ch
+	c.mu.Unlock()
+	return nil
+}
+
+// supervise blocks on the current connection's close notification and, unless
+// the close was intentional (Close), reconnects and re-establishes everything.
+func (c *Conn) supervise() {
+	for !c.closed.Load() {
+		c.mu.RLock()
+		conn := c.conn
+		c.mu.RUnlock()
+		if conn == nil {
+			return
+		}
+		err := <-conn.NotifyClose(make(chan *amqp.Error, 1))
+		if c.closed.Load() {
+			return
+		}
+		c.log.Warn("amqp connection lost; reconnecting", "err", err)
+		c.reconnect()
+		if c.closed.Load() {
+			return
+		}
+		c.log.Info("amqp reconnected")
+	}
+}
+
+// reconnect retries connect() with capped exponential backoff, then rebuilds all
+// subscriptions on the fresh channel.
+func (c *Conn) reconnect() {
+	backoff := time.Second
+	for !c.closed.Load() {
+		if err := c.connect(); err != nil {
+			c.log.Warn("amqp reconnect failed", "err", err, "retry_in", backoff.String())
+			time.Sleep(backoff)
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		c.reestablish()
+		return
+	}
+}
+
+// reestablish re-subscribes every registered consumer + config handler after a
+// reconnect (their old channels died with the old connection).
+func (c *Conn) reestablish() {
+	c.regMu.Lock()
+	defer c.regMu.Unlock()
+	for _, cs := range c.consumers {
+		if err := c.startConsumer(cs); err != nil {
+			c.log.Error("re-subscribe consumer failed", "queue", cs.queue, "err", err)
+		}
+	}
+	for _, h := range c.configHandlers {
+		if err := c.startConfigSub(h); err != nil {
+			c.log.Error("re-subscribe config failed", "err", err)
+		}
+	}
+}
+
+// startConsumer opens the AMQP consume on the current channel and forwards each
+// delivery to the consumer's stable out channel until the channel closes.
+func (c *Conn) startConsumer(cs *consumer) error {
+	c.mu.RLock()
+	ch := c.ch
+	c.mu.RUnlock()
+	if ch == nil {
+		return fmt.Errorf("no channel")
+	}
+	if err := ch.Qos(cs.prefetch, 0, false); err != nil {
+		return fmt.Errorf("qos: %w", err)
+	}
+	d, err := ch.Consume(cs.queue, "", false, false, false, false, nil)
+	if err != nil {
+		return fmt.Errorf("consume %s: %w", cs.queue, err)
+	}
+	go func() {
+		for msg := range d {
+			cs.out <- msg
+		}
+		// d closed (disconnect or shutdown); the supervisor re-establishes.
+	}()
+	return nil
 }
 
 // dialBus dials plaintext amqp:// directly; for amqps:// it loads a TLS config
@@ -159,78 +284,109 @@ func declare(ch *amqp.Channel) error {
 	return nil
 }
 
-// Requeue publishes a job (with its incremented Attempt) onto a wait tier via
-// the default exchange; it dead-letters back to relay.work when the TTL expires.
-func (c *Conn) Requeue(ctx context.Context, tier WaitTier, job *model.RelayJob) error {
-	return c.publishToQueue(ctx, tier.Queue, job)
+// publish sends on the current channel, retrying across a reconnect: if the
+// channel is gone, it waits briefly for the supervisor to re-establish it and
+// tries again, until ctx expires or the retry budget is exhausted.
+func (c *Conn) publish(ctx context.Context, exchange, key string, pub amqp.Publishing) error {
+	var lastErr error
+	for attempt := 0; attempt < 6; attempt++ {
+		c.mu.RLock()
+		ch := c.ch
+		c.mu.RUnlock()
+		if ch != nil {
+			if err := ch.PublishWithContext(ctx, exchange, key, false, false, pub); err == nil {
+				return nil
+			} else {
+				lastErr = err
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(500 * time.Millisecond): // give the supervisor time to reconnect
+		}
+	}
+	if lastErr == nil {
+		lastErr = fmt.Errorf("amqp channel unavailable")
+	}
+	return fmt.Errorf("publish to %q: %w", exchange+"/"+key, lastErr)
 }
 
-// DeadLetter publishes a permanently-failed job to the DLQ.
-func (c *Conn) DeadLetter(ctx context.Context, job *model.RelayJob) error {
-	return c.publishToQueue(ctx, DLQ, job)
-}
-
-func (c *Conn) publishToQueue(ctx context.Context, queue string, job *model.RelayJob) error {
+func jobPublishing(job *model.RelayJob) (amqp.Publishing, error) {
 	body, err := json.Marshal(job)
 	if err != nil {
-		return fmt.Errorf("marshal job: %w", err)
+		return amqp.Publishing{}, fmt.Errorf("marshal job: %w", err)
 	}
-	// Default exchange routes by queue name.
-	return c.ch.PublishWithContext(ctx, "", queue, false, false, amqp.Publishing{
+	return amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Persistent,
 		MessageId:    job.MessageID,
 		Body:         body,
-	})
+	}, nil
 }
 
-// ConsumeQueue consumes an arbitrary queue with manual acks (used by the DSN
-// generator for the DLQ).
-func (c *Conn) ConsumeQueue(queue string, prefetch int) (<-chan amqp.Delivery, error) {
-	if err := c.ch.Qos(prefetch, 0, false); err != nil {
-		return nil, fmt.Errorf("qos: %w", err)
-	}
-	d, err := c.ch.Consume(queue, "", false, false, false, false, nil)
+// Requeue publishes a job (with its incremented Attempt) onto a wait tier via
+// the default exchange; it dead-letters back to relay.work when the TTL expires.
+func (c *Conn) Requeue(ctx context.Context, tier WaitTier, job *model.RelayJob) error {
+	pub, err := jobPublishing(job)
 	if err != nil {
-		return nil, fmt.Errorf("consume %s: %w", queue, err)
+		return err
 	}
-	return d, nil
+	return c.publish(ctx, "", tier.Queue, pub) // default exchange routes by queue name
+}
+
+// DeadLetter publishes a permanently-failed job to the DLQ.
+func (c *Conn) DeadLetter(ctx context.Context, job *model.RelayJob) error {
+	pub, err := jobPublishing(job)
+	if err != nil {
+		return err
+	}
+	return c.publish(ctx, "", DLQ, pub)
 }
 
 // Publish serialises a job and publishes it keyed on the recipient domain.
 func (c *Conn) Publish(ctx context.Context, job *model.RelayJob) error {
-	body, err := json.Marshal(job)
+	pub, err := jobPublishing(job)
 	if err != nil {
-		return fmt.Errorf("marshal job: %w", err)
+		return err
 	}
-	return c.ch.PublishWithContext(ctx, WorkExchange, job.RoutingHints.RecipientDomain, false, false,
-		amqp.Publishing{
-			ContentType:  "application/json",
-			DeliveryMode: amqp.Persistent,
-			MessageId:    job.MessageID,
-			Body:         body,
-		})
+	return c.publish(ctx, WorkExchange, job.RoutingHints.RecipientDomain, pub)
+}
+
+// ConsumeQueue consumes an arbitrary queue with manual acks (used by the DSN
+// generator for the DLQ). The returned channel survives broker reconnects.
+func (c *Conn) ConsumeQueue(queue string, prefetch int) (<-chan amqp.Delivery, error) {
+	return c.registerConsumer(queue, prefetch)
 }
 
 // Consume returns a delivery channel for the work queue with manual acks.
-// prefetch bounds in-flight messages per consumer (QoS).
+// prefetch bounds in-flight messages per consumer (QoS). The channel survives
+// broker reconnects (it is never closed until Close), so the consumer loop does
+// not need to exit and re-subscribe on a RabbitMQ restart.
 func (c *Conn) Consume(prefetch int) (<-chan amqp.Delivery, error) {
-	if err := c.ch.Qos(prefetch, 0, false); err != nil {
-		return nil, fmt.Errorf("qos: %w", err)
+	return c.registerConsumer(WorkQueue, prefetch)
+}
+
+func (c *Conn) registerConsumer(queue string, prefetch int) (<-chan amqp.Delivery, error) {
+	cs := &consumer{queue: queue, prefetch: prefetch, out: make(chan amqp.Delivery, prefetch)}
+	c.regMu.Lock()
+	c.consumers = append(c.consumers, cs)
+	c.regMu.Unlock()
+	if err := c.startConsumer(cs); err != nil {
+		return nil, err
 	}
-	d, err := c.ch.Consume(WorkQueue, "", false, false, false, false, nil)
-	if err != nil {
-		return nil, fmt.Errorf("consume: %w", err)
-	}
-	return d, nil
+	return cs.out, nil
 }
 
 // PublishConfig publishes a config.changed event to the fanout exchange.
 func (c *Conn) PublishConfig(ctx context.Context, body []byte) error {
-	if err := c.ch.ExchangeDeclare(ConfigExchange, "fanout", true, false, false, false, nil); err != nil {
-		return fmt.Errorf("declare config exchange: %w", err)
+	c.mu.RLock()
+	ch := c.ch
+	c.mu.RUnlock()
+	if ch != nil {
+		_ = ch.ExchangeDeclare(ConfigExchange, "fanout", true, false, false, false, nil)
 	}
-	return c.ch.PublishWithContext(ctx, ConfigExchange, "", false, false, amqp.Publishing{
+	return c.publish(ctx, ConfigExchange, "", amqp.Publishing{
 		ContentType:  "application/json",
 		DeliveryMode: amqp.Transient,
 		Body:         body,
@@ -238,10 +394,23 @@ func (c *Conn) PublishConfig(ctx context.Context, body []byte) error {
 }
 
 // SubscribeConfig binds an exclusive, auto-delete queue to the config fanout and
-// invokes handler with each event body. It opens its own channel so it does not
-// interfere with the work-queue consumer's QoS. Runs until the connection closes.
+// invokes handler with each event body. The subscription is re-established on
+// every reconnect, so config hot-reload survives a broker restart.
 func (c *Conn) SubscribeConfig(handler func([]byte)) error {
-	ch, err := c.conn.Channel()
+	c.regMu.Lock()
+	c.configHandlers = append(c.configHandlers, handler)
+	c.regMu.Unlock()
+	return c.startConfigSub(handler)
+}
+
+func (c *Conn) startConfigSub(handler func([]byte)) error {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn == nil {
+		return fmt.Errorf("no connection")
+	}
+	ch, err := conn.Channel() // own channel so it does not share the work-queue QoS
 	if err != nil {
 		return fmt.Errorf("config channel: %w", err)
 	}
@@ -267,17 +436,27 @@ func (c *Conn) SubscribeConfig(handler func([]byte)) error {
 	return nil
 }
 
-// Ping reports whether the channel/connection is usable (for readiness).
+// Ping reports whether the connection is usable (for readiness). During a
+// reconnect this returns an error, so the pod is briefly marked NotReady (but
+// not restarted — liveness does not check the bus) and recovers on reconnect.
 func (c *Conn) Ping() error {
-	if c.conn == nil || c.conn.IsClosed() {
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn == nil || conn.IsClosed() {
 		return fmt.Errorf("amqp connection closed")
 	}
 	return nil
 }
 
+// Close stops the supervisor and closes the connection.
 func (c *Conn) Close() error {
-	if c.conn != nil {
-		return c.conn.Close()
+	c.closed.Store(true)
+	c.mu.RLock()
+	conn := c.conn
+	c.mu.RUnlock()
+	if conn != nil {
+		return conn.Close()
 	}
 	return nil
 }
