@@ -1,0 +1,61 @@
+{{- if .Values.delivery.keda.enabled }}
+{{/*
+KEDA queue-depth autoscaling for the delivery workers. delivery is I/O-bound on
+the upstream SMTP handoff, so the relay.work backlog (not CPU) is the right
+signal. Reads the queue length over mutual-TLS AMQP to nova-bus using the same
+CA + client cert the data plane uses. Requires KEDA installed cluster-wide.
+*/}}
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: {{ include "novamail.fullname" . }}-rabbitmq
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+spec:
+  secretTargetRef:
+    - parameter: host
+      name: {{ .Values.rabbitmqSecret | default "novamail-rabbitmq" }}
+      key: AMQP_URL
+    {{- if .Values.amqpmtls.enabled }}
+    - parameter: ca
+      name: {{ .Values.amqpmtls.caSecret }}
+      key: ca.crt
+    - parameter: cert
+      name: {{ .Values.amqpmtls.clientSecret }}
+      key: tls.crt
+    - parameter: key
+      name: {{ .Values.amqpmtls.clientSecret }}
+      key: tls.key
+    {{- end }}
+---
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "novamail.fullname" . }}-delivery
+  labels:
+    {{- include "novamail.labels" . | nindent 4 }}
+spec:
+  scaleTargetRef:
+    name: {{ include "novamail.fullname" . }}-delivery
+  minReplicaCount: {{ .Values.delivery.keda.minReplicas }}
+  maxReplicaCount: {{ .Values.delivery.keda.maxReplicas }}
+  pollingInterval: {{ .Values.delivery.keda.pollingInterval | default 15 }}
+  cooldownPeriod: {{ .Values.delivery.keda.cooldownPeriod | default 300 }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 300
+  triggers:
+    - type: rabbitmq
+      metadata:
+        protocol: amqp
+        queueName: {{ .Values.delivery.keda.queueName | quote }}
+        mode: QueueLength
+        value: {{ .Values.delivery.keda.messagesPerReplica | quote }}
+        {{- if .Values.amqpmtls.enabled }}
+        tls: enable
+        {{- end }}
+      authenticationRef:
+        name: {{ include "novamail.fullname" . }}-rabbitmq
+{{- end }}
