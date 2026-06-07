@@ -19,6 +19,11 @@ rules:
   - apiGroups: [""]
     resources: [services, persistentvolumeclaims, configmaps, secrets, serviceaccounts, pods, events, endpoints]
     verbs: ["*"]
+  # pods/exec + pods/log: the post-deploy relay smoke (test/e2e) submits from an
+  # ephemeral pod and verifies the message status via psql exec.
+  - apiGroups: [""]
+    resources: [pods/exec, pods/log]
+    verbs: ["create", "get"]
   - apiGroups: [apps]
     resources: [deployments, replicasets, statefulsets]
     verbs: ["*"]
