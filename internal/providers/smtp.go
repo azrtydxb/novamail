@@ -135,11 +135,11 @@ func classify(err error) (Result, error) {
 	return Result{Outcome: Defer, Detail: err.Error()}, err
 }
 
+// hostOnly returns the host portion of a host:port for the TLS ServerName,
+// handling bracketed IPv6 (e.g. "[2001:db8::1]:587" → "2001:db8::1").
 func hostOnly(addr string) string {
-	for i := 0; i < len(addr); i++ {
-		if addr[i] == ':' {
-			return addr[:i]
-		}
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		return h
 	}
-	return addr
+	return addr // no port (or unparseable): use as-is
 }
