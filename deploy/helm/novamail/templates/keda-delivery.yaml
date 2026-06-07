@@ -2,8 +2,14 @@
 {{/*
 KEDA queue-depth autoscaling for the delivery workers. delivery is I/O-bound on
 the upstream SMTP handoff, so the relay.work backlog (not CPU) is the right
-signal. Reads the queue length over mutual-TLS AMQP to nova-bus using the same
-CA + client cert the data plane uses. Requires KEDA installed cluster-wide.
+scaling signal. Requires KEDA installed cluster-wide.
+
+Reads the queue length via RabbitMQ's HTTP management API. The bus is mutual-TLS
+only, and KEDA's AMQP scaler doesn't load a custom CA cleanly, so we use the
+management endpoint with unsafeSsl (TLS-encrypted; the self-signed cert is not
+verified — acceptable for an in-cluster, read-only queue-length probe). The
+management URL (with the operator's generated credentials) lives in the
+novamail-rabbitmq-keda secret — create it with deploy/cluster/deps/gen-keda-secret.sh.
 */}}
 apiVersion: keda.sh/v1alpha1
 kind: TriggerAuthentication
@@ -14,19 +20,8 @@ metadata:
 spec:
   secretTargetRef:
     - parameter: host
-      name: {{ .Values.rabbitmqSecret | default "novamail-rabbitmq" }}
-      key: AMQP_URL
-    {{- if .Values.amqpmtls.enabled }}
-    - parameter: ca
-      name: {{ .Values.amqpmtls.caSecret }}
-      key: ca.crt
-    - parameter: cert
-      name: {{ .Values.amqpmtls.clientSecret }}
-      key: tls.crt
-    - parameter: key
-      name: {{ .Values.amqpmtls.clientSecret }}
-      key: tls.key
-    {{- end }}
+      name: {{ .Values.delivery.keda.hostSecret | default "novamail-rabbitmq-keda" }}
+      key: host
 ---
 apiVersion: keda.sh/v1alpha1
 kind: ScaledObject
@@ -49,13 +44,12 @@ spec:
   triggers:
     - type: rabbitmq
       metadata:
-        protocol: amqp
+        protocol: http
         queueName: {{ .Values.delivery.keda.queueName | quote }}
         mode: QueueLength
         value: {{ .Values.delivery.keda.messagesPerReplica | quote }}
-        {{- if .Values.amqpmtls.enabled }}
-        tls: enable
-        {{- end }}
+        vhostName: "/"
+        unsafeSsl: {{ .Values.delivery.keda.unsafeSsl | default true | quote }}
       authenticationRef:
         name: {{ include "novamail.fullname" . }}-rabbitmq
 {{- end }}

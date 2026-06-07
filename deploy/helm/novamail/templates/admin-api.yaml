@@ -26,6 +26,7 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000   # the node image's "node" user (numeric, so kubelet can verify)
         runAsGroup: 1000
+        fsGroup: 1000     # so the 0640 PG/AMQP client key is group-readable by the app
         seccompProfile:
           type: RuntimeDefault
       affinity:

@@ -97,7 +97,7 @@ app.kubernetes.io/component: web
 {{- if .Values.pgmtls.enabled }}
 - name: pgtls
   projected:
-    defaultMode: 0644
+    defaultMode: 0640
     sources:
       - secret:
           name: {{ .Values.pgmtls.caSecret }}
@@ -124,7 +124,7 @@ app.kubernetes.io/component: web
 {{- if .Values.amqpmtls.enabled }}
 - name: amqptls
   projected:
-    defaultMode: 0644
+    defaultMode: 0640
     sources:
       - secret:
           name: {{ .Values.amqpmtls.caSecret }}

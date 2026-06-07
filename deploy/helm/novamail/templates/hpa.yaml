@@ -7,11 +7,11 @@ KEDA and swap this for a RabbitMQ ScaledObject. The scaleDown stabilization
 window avoids flapping when traffic is bursty.
 */}}
 {{- range $svc := list
-      (dict "suffix" "ingress"   "cfg" .Values.ingressApp.autoscaling)
-      (dict "suffix" "delivery"  "cfg" .Values.delivery.autoscaling)
-      (dict "suffix" "admin-api" "cfg" .Values.adminApi.autoscaling)
-      (dict "suffix" "web"       "cfg" .Values.web.autoscaling) }}
-{{- if $svc.cfg.enabled }}
+      (dict "suffix" "ingress"   "cfg" .Values.ingressApp.autoscaling "comp" (ne .Values.ingressApp.enabled false))
+      (dict "suffix" "delivery"  "cfg" .Values.delivery.autoscaling   "comp" (and (ne .Values.delivery.enabled false) (not .Values.delivery.keda.enabled)))
+      (dict "suffix" "admin-api" "cfg" .Values.adminApi.autoscaling   "comp" (ne .Values.adminApi.enabled false))
+      (dict "suffix" "web"       "cfg" .Values.web.autoscaling        "comp" (ne .Values.web.enabled false)) }}
+{{- if and $svc.cfg.enabled $svc.comp }}
 ---
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
