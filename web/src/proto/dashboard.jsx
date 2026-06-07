@@ -1,5 +1,6 @@
 /* global React, I */
 /* NovaMail Dashboard — sparklines, live queue depth, throughput chart, 3 layout variants */
+import { api } from '../api.ts';
 const { useState: useDashState, useEffect: useDashEffect, useRef: useDashRef } = React;
 
 function useWidth(ref) {
@@ -80,6 +81,36 @@ function StatCard({ label, value, unit, delta, deltaTone = 'good', spark, sparkC
           {deltaTone === 'good' ? <I.ArrowUp size={11} /> : deltaTone === 'danger' ? <I.ArrowDown size={11} /> : <I.Dot size={11} />}
           {delta}
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ---- Deliverability summary tile (self-fetches the cached summary) ---- */
+function DeliverabilityTile({ onNavigate }) {
+  const [s, setS] = useDashState(null);
+  useDashEffect(() => { api('/deliverability/summary').then(setS).catch(() => setS({ failed: true })); }, []);
+  const row = (color, label, n) => (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 15px', borderTop: '1px solid var(--line)' }}>
+      <span style={{ width: 6, height: 6, borderRadius: '50%', background: color }} />
+      <span style={{ flex: 1, fontSize: 12.5, color: 'var(--fg-1)' }}>{label}</span>
+      <span className="mono" style={{ fontSize: 12, color: 'var(--fg-2)' }}>{n}</span>
+    </div>
+  );
+  return (
+    <div style={{ background: 'var(--bg-1)', border: '1px solid var(--line)', borderRadius: 10, overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', padding: '11px 15px' }}>
+        <span className="mono" style={{ fontSize: 11, letterSpacing: '0.06em', textTransform: 'uppercase', color: 'var(--fg-2)', flex: 1 }}>Deliverability</span>
+        <button className="mono" onClick={() => onNavigate('deliverability')} style={{ fontSize: 11, color: 'var(--link)', textDecoration: 'underline', textDecorationStyle: 'dashed', textUnderlineOffset: 3 }}>all domains</button>
+      </div>
+      {!s && <div style={{ padding: '4px 15px 13px', fontSize: 12, color: 'var(--fg-3)' }}>checking…</div>}
+      {s && s.failed && <div style={{ padding: '4px 15px 13px', fontSize: 12, color: 'var(--fg-3)' }}>unavailable</div>}
+      {s && !s.failed && (
+        <>
+          {row('var(--accent-good)', 'Healthy', s.ok || 0)}
+          {row('var(--accent-warn)', 'Warnings', s.warning || 0)}
+          {row('var(--accent-danger)', 'Errors', s.error || 0)}
+        </>
       )}
     </div>
   );
@@ -190,6 +221,7 @@ function Dashboard({ live, onNavigate, onOpenMessage, layout = 'overview' }) {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 14 }}>
           <ProviderHealth onNavigate={onNavigate} />
+          <DeliverabilityTile onNavigate={onNavigate} />
           <RecentActivity onOpen={(id) => id ? openMsg(id) : onNavigate('messages')} />
         </div>
       </ScreenBody>

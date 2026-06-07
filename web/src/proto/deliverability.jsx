@@ -12,6 +12,14 @@ const DELIV_TONE = { ok: 'good', warning: 'warn', error: 'danger', info: 'accent
 const REC_LABEL = { spf: 'SPF', dkim: 'DKIM', dmarc: 'DMARC', mx: 'MX', mta_sts: 'MTA-STS', bimi: 'BIMI', tls_rpt: 'TLS-RPT' };
 const AUTH_RECORDS = ['spf', 'dkim', 'dmarc']; // required; the rest are hygiene
 
+function relTime(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`;
+  return `${Math.floor(s / 86400)}d ago`;
+}
+
 function DelivRecord({ r }) {
   return (
     <div style={{ display: 'flex', gap: 11, padding: '9px 0', borderTop: '1px solid var(--line)' }}>
@@ -78,6 +86,9 @@ function Deliverability() {
   const [err, setErr] = useDelivState(null);
   const [checking, setChecking] = useDelivState({});
 
+  const [busy, setBusy] = useDelivState(false);
+
+  // Cached read (fast) on mount; the periodic job + explicit re-checks refresh it.
   async function loadAll() {
     setErr(null);
     setReports(null);
@@ -89,10 +100,23 @@ function Deliverability() {
   }
   useDelivEffect(() => { loadAll(); }, []);
 
+  // Force a fresh re-check of every domain.
+  async function recheckAll() {
+    setBusy(true);
+    try {
+      setReports(await api('/deliverability/check', { method: 'POST' }));
+      window.nmToast('Re-checked all domains', 'good');
+    } catch (e) {
+      window.nmToast(String(e.message || e), 'danger');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function checkOne(domain) {
     setChecking((c) => ({ ...c, [domain]: true }));
     try {
-      const r = await api('/deliverability/' + encodeURIComponent(domain));
+      const r = await api('/deliverability/' + encodeURIComponent(domain) + '/check', { method: 'POST' });
       setReports((rs) => (rs || []).map((x) => (x.domain === domain ? r : x)));
       window.nmToast(`${domain}: ${r.status}`, r.status === 'ok' ? 'good' : r.status === 'error' ? 'danger' : 'warn');
     } catch (e) {
@@ -105,13 +129,14 @@ function Deliverability() {
   const rs = reports || [];
   const counts = { ok: 0, warning: 0, error: 0 };
   rs.forEach((r) => { counts[r.status] = (counts[r.status] || 0) + 1; });
+  const lastChecked = rs.reduce((m, r) => (r.checkedAt && r.checkedAt > m ? r.checkedAt : m), '');
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
       <PageHeader icon={<I.Shield size={18} />} eyebrow="outgoing" title="Deliverability"
         count={reports ? `${rs.length} domains` : 'checking…'}
-        sub="live DNS health for relay domains · SPF · DKIM (key match) · DMARC"
-        actions={<Btn kind="primary" icon={<I.Refresh size={13} />} size="sm" onClick={loadAll}>re-check all</Btn>} />
+        sub={lastChecked ? `last checked ${relTime(lastChecked)} · SPF · DKIM (key match) · DMARC + hygiene` : 'live DNS health · SPF · DKIM · DMARC + hygiene'}
+        actions={<Btn kind="primary" icon={<I.Refresh size={13} />} size="sm" onClick={recheckAll}>{busy ? 'checking…' : 're-check all'}</Btn>} />
       <ScreenBody>
         {err && <div style={{ color: 'var(--accent-danger)', fontSize: 13 }}>Failed to load: {err}</div>}
         {!reports && !err && <div style={{ color: 'var(--fg-3)', fontSize: 13 }}>Resolving DNS for all relay domains…</div>}
