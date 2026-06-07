@@ -19,6 +19,10 @@ spec:
     synchronous:
       method: any
       number: 1
+    # Mutual TLS: the novamail app user must present a CA-signed client cert
+    # (verify-ca) over TLS. Replication + superuser fall through to CNPG defaults.
+    pg_hba:
+      - hostssl all novamail all scram-sha-256 clientcert=verify-ca
   bootstrap:
     initdb:
       database: novamail

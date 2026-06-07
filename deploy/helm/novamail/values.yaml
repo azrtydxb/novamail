@@ -176,3 +176,12 @@ pgmtls:
   caSecret: novamail-pg-ca         # CNPG-managed CA (ca.crt)
   clientSecret: novamail-pg-client  # app client cert (CN=novamail), signed by the CA
   mountPath: /etc/novamail/pgtls
+
+# RabbitMQ mutual TLS: mount the bus CA + an app client cert so every
+# connection is amqps + client-authenticated. Activate by flipping AMQP_URL
+# to amqps://...:5671 (see deploy/cluster/README.md).
+amqpmtls:
+  enabled: true
+  caSecret: nova-bus-ca            # CA that signs the broker + client certs
+  clientSecret: novamail-amqp-client
+  mountPath: /etc/novamail/amqptls

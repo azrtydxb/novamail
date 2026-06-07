@@ -59,10 +59,12 @@ spec:
             {{- toYaml .Values.dsn.resources | nindent 12 }}
           volumeMounts:
             {{- include "novamail.pgtls.volumeMount" . | nindent 12 }}
+            {{- include "novamail.amqptls.volumeMount" . | nindent 12 }}
             - name: bodies
               mountPath: {{ .Values.bodyStore.mountPath }}
       volumes:
         {{- include "novamail.pgtls.volume" . | nindent 8 }}
+        {{- include "novamail.amqptls.volume" . | nindent 8 }}
         - name: bodies
           {{- if .Values.bodyStore.enabled }}
           persistentVolumeClaim:

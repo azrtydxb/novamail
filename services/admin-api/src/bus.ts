@@ -1,4 +1,5 @@
 import amqp from "amqplib";
+import { readFileSync, existsSync } from "node:fs";
 import { nextEpoch } from "./db.js";
 
 const CONFIG_EXCHANGE = "config.changed";
@@ -6,9 +7,25 @@ const WORK_EXCHANGE = "relay.work";
 
 let chan: amqp.Channel | null = null;
 
+// busTLS builds amqplib socket options for amqps:// from the mounted CA (+ client
+// cert for mutual TLS). Returns undefined for plaintext amqp:// or no CA.
+function busTLS(): Record<string, unknown> | undefined {
+  const url = process.env.AMQP_URL ?? "";
+  if (!url.startsWith("amqps://")) return undefined;
+  const dir = process.env.NOVAMAIL_AMQP_TLS_DIR || "/etc/novamail/amqptls";
+  const ca = `${dir}/ca.crt`, cert = `${dir}/tls.crt`, key = `${dir}/tls.key`;
+  if (!existsSync(ca)) return undefined;
+  return {
+    ca: [readFileSync(ca)],
+    cert: existsSync(cert) ? readFileSync(cert) : undefined,
+    key: existsSync(key) ? readFileSync(key) : undefined,
+    servername: process.env.NOVAMAIL_AMQP_SERVERNAME || "nova-bus",
+  };
+}
+
 // connect establishes the publisher channel and asserts the fanout exchange.
 export async function connect(): Promise<void> {
-  const conn = await amqp.connect(process.env.AMQP_URL!);
+  const conn = await amqp.connect(process.env.AMQP_URL!, busTLS());
   chan = await conn.createChannel();
   await chan.assertExchange(CONFIG_EXCHANGE, "fanout", { durable: true });
   conn.on("close", () => {
