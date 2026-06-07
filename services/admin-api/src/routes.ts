@@ -91,7 +91,11 @@ export function registerRoutes(app: FastifyInstance): void {
         signal: AbortSignal.timeout(20000),
       });
       const body = (await res.json()) as { ok?: boolean };
-      return reply.code(res.ok && body.ok ? 200 : 502).send(body);
+      // A reachable delivery service that ran the test is a SUCCESSFUL request,
+      // even when the provider check failed (ok:false) — return 200 with the
+      // result; reserve 5xx for the delivery service being unreachable/erroring.
+      if (res.ok) return reply.code(200).send(body);
+      return reply.code(502).send(body);
     } catch (e) {
       return reply.code(502).send({ ok: false, error: (e as Error).message });
     }
