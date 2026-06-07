@@ -249,6 +249,8 @@ async function generateDKIM(domain, selector) {
 async function purgeQueue(name) { await api(`/queues/${encodeURIComponent(name)}/purge`, { method: 'POST' }); await refreshLight(); }
 async function requeueMessage(id) { await api(`/messages/${id}/requeue`, { method: 'POST' }); await refreshLight(); }
 async function saveSetting(key, value) { await api(`/settings/${encodeURIComponent(key)}`, { method: 'PUT', body: { value } }); await loadAll(); }
+// testProvider verifies a provider's connectivity + auth without sending; returns {ok, error?}.
+async function testProvider(id) { try { return await api(`/providers/${id}/test`, { method: 'POST' }); } catch (e) { return { ok: false, error: String(e.message || e) }; } }
 
-window.Store = { loadAll, refreshLight, save, remove, toggle, login, logout, checkSession, changePassword, generateDKIM, purgeQueue, requeueMessage, saveSetting };
+window.Store = { loadAll, refreshLight, save, remove, toggle, login, logout, checkSession, changePassword, generateDKIM, purgeQueue, requeueMessage, saveSetting, testProvider };
 export const Store = window.Store;

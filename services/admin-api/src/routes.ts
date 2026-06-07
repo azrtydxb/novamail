@@ -80,6 +80,23 @@ export function registerRoutes(app: FastifyInstance): void {
     });
   }
 
+  // Test a provider's connectivity + auth (no message sent). Proxies to the
+  // delivery service, which holds the live provider instances + resolved creds.
+  const deliveryURL = process.env.NOVAMAIL_DELIVERY_URL || "http://novamail-delivery:8080";
+  app.post("/api/providers/:id/test", async (req, reply) => {
+    const id = (req.params as { id: string }).id;
+    try {
+      const res = await fetch(`${deliveryURL}/test/${encodeURIComponent(id)}`, {
+        method: "GET",
+        signal: AbortSignal.timeout(20000),
+      });
+      const body = (await res.json()) as { ok?: boolean };
+      return reply.code(res.ok && body.ok ? 200 : 502).send(body);
+    } catch (e) {
+      return reply.code(502).send({ ok: false, error: (e as Error).message });
+    }
+  });
+
   // Accounts: passwords are hashed here; the hash is never returned.
   app.get("/api/accounts", async () => {
     const { rows } = await pool.query(

@@ -97,6 +97,31 @@ func (p *SMTPProvider) Send(ctx context.Context, m *Message) (Result, error) {
 	return Result{Outcome: Delivered, Detail: "250 ok"}, nil
 }
 
+// Verify checks reachability + authentication without sending a message: it
+// dials (honoring TLS policy), greets, and authenticates if credentials are set,
+// then closes. Used by the Admin API "test connection" action.
+func (p *SMTPProvider) Verify(ctx context.Context) error {
+	if p.cfg.Username != "" && p.cfg.TLSMode == "none" {
+		return fmt.Errorf("refusing PLAIN auth over a non-TLS connection")
+	}
+	c, err := p.dial(ctx)
+	if err != nil {
+		return fmt.Errorf("dial %s: %w", p.cfg.Addr, err)
+	}
+	defer func() { _ = c.Close() }()
+	if p.cfg.HELO != "" {
+		if err := c.Hello(p.cfg.HELO); err != nil {
+			return err
+		}
+	}
+	if p.cfg.Username != "" {
+		if err := c.Auth(sasl.NewPlainClient("", p.cfg.Username, p.cfg.Password)); err != nil {
+			return fmt.Errorf("auth: %w", err)
+		}
+	}
+	return nil
+}
+
 // classify maps an SMTP error to Defer (4xx / network) or Fail (5xx).
 func classify(err error) (Result, error) {
 	var se *smtp.SMTPError
