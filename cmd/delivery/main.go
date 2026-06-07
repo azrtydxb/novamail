@@ -148,7 +148,7 @@ func main() {
 	}
 
 	// Health/metrics server.
-	go serveHealth(env("NOVAMAIL_HTTP_ADDR", ":8080"), database, bus, logger)
+	go serveHealth(env("NOVAMAIL_HTTP_ADDR", ":8080"), database, bus, w, logger)
 
 	deliveries, err := bus.Consume(20)
 	if err != nil {
@@ -518,11 +518,35 @@ func (w *worker) toDLQ(ctx context.Context, d amqp091.Delivery, job *model.Relay
 	_ = d.Ack(false)
 }
 
-func serveHealth(addr string, database *db.DB, bus *amqp.Conn, logger *slog.Logger) {
+func serveHealth(addr string, database *db.DB, bus *amqp.Conn, wk *worker, logger *slog.Logger) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = io.WriteString(w, "ok")
+	})
+	// Test a provider's connectivity + auth without sending (Admin API action).
+	mux.HandleFunc("/test/", func(w http.ResponseWriter, r *http.Request) {
+		id := strings.TrimPrefix(r.URL.Path, "/test/")
+		w.Header().Set("Content-Type", "application/json")
+		st := wk.state.Load()
+		p, ok := st.instances[id]
+		if !ok {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "unknown or disabled provider"})
+			return
+		}
+		t, ok := p.(providers.Tester)
+		if !ok {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": "provider type does not support testing"})
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer cancel()
+		if err := t.Verify(ctx); err != nil {
+			_ = json.NewEncoder(w).Encode(map[string]any{"ok": false, "error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "provider": p.Name()})
 	})
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)

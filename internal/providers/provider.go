@@ -50,3 +50,10 @@ type Provider interface {
 	Send(ctx context.Context, m *Message) (Result, error)
 	Name() string
 }
+
+// Tester is an optional capability: verify connectivity + auth without sending
+// (the Admin API "test connection" action). Providers that can't be tested
+// safely simply don't implement it.
+type Tester interface {
+	Verify(ctx context.Context) error
+}

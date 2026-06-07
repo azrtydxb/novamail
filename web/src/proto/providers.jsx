@@ -20,6 +20,11 @@ function ProviderCard({ p }) {
           <div style={{ marginTop: 4 }}><ProviderType type={p.type} /></div>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 2 }} onClick={(e) => e.stopPropagation()}>
+          <IconBtn size={26} title="Test connection" onClick={async () => {
+            window.nmToast(`testing ${p.name}…`, 'info');
+            const r = await window.Store.testProvider(p.id);
+            window.nmToast(r.ok ? `${p.name}: connection OK` : `${p.name}: ${r.error || 'failed'}`, r.ok ? 'good' : 'danger');
+          }}><I.Activity size={13} /></IconBtn>
           <IconBtn size={26} title="Edit" onClick={() => window.nmModal({ coll: 'providers', mode: 'edit', item: p })}><I.Edit size={13} /></IconBtn>
           <IconBtn size={26} title="Delete" onClick={() => window.nmModal({ kind: 'confirm', coll: 'providers', item: p })}><I.Trash size={13} /></IconBtn>
           <Toggle size="sm" on={on} onChange={() => window.Store.toggle('providers', p)} />
