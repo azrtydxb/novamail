@@ -27,6 +27,7 @@ function Sidebar({ route, onNavigate, onCollapse, onOpenPalette, queueDepth }) {
       { id: 'messages', label: 'Messages', icon: <I.Mail size={15} />, hint: 'trace' },
       { id: 'queue', label: 'Queue', icon: <I.Layers size={15} />, hint: queueDepth },
       { id: 'suppressions', label: 'Suppressions', icon: <I.Ban size={15} />, hint: (SUPPRESSIONS || []).length || undefined },
+      { id: 'notifications', label: 'Notifications', icon: <I.AlertTriangle size={15} /> },
       { id: 'audit', label: 'Audit log', icon: <I.List size={15} /> },
       { id: 'operators', label: 'Operators', icon: <I.Users size={15} /> },
       { id: 'settings', label: 'Settings', icon: <I.Settings size={15} /> },

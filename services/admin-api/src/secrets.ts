@@ -27,3 +27,20 @@ export function encrypt(plaintext: string): string {
   const wrapped = sealGCM(kek(), dek);
   return JSON.stringify({ v: 1, dek: wrapped, data });
 }
+
+function openGCM(key: Buffer, b64: string): Buffer {
+  const buf = Buffer.from(b64, "base64");
+  const nonce = buf.subarray(0, 12);
+  const tag = buf.subarray(buf.length - 16);
+  const ct = buf.subarray(12, buf.length - 16);
+  const d = crypto.createDecipheriv("aes-256-gcm", key, nonce);
+  d.setAuthTag(tag);
+  return Buffer.concat([d.update(ct), d.final()]);
+}
+
+// decrypt reverses encrypt(): unwrap the DEK with the KEK, then open the data.
+export function decrypt(envelope: string): string {
+  const { dek, data } = JSON.parse(envelope) as { dek: string; data: string };
+  const rawDek = openGCM(kek(), dek);
+  return openGCM(rawDek, data).toString("utf8");
+}

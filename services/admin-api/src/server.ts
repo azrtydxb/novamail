@@ -5,6 +5,7 @@ import { connect, ready } from "./bus.js";
 import { registerRoutes } from "./routes.js";
 import { registerTelemetry } from "./telemetry.js";
 import { registerDeliverability } from "./deliverability.js";
+import { registerAlerts } from "./alerts.js";
 import { auth } from "./betterauth.js";
 
 declare module "fastify" {
@@ -102,6 +103,7 @@ app.get("/readyz", async (_req, reply) => {
 registerRoutes(app);
 registerTelemetry(app);
 registerDeliverability(app);
+registerAlerts(app);
 
 const port = Number(process.env.PORT ?? 3000);
 

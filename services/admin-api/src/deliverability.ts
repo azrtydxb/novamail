@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
 import { pool } from "./db.js";
+import { dispatchAlerts } from "./alerts.js";
 
 // Deliverability checks (Phase 1): resolve and grade a relay domain's email-auth
 // DNS — SPF, DKIM, DMARC — and return the exact record to publish for each issue.
@@ -447,16 +448,22 @@ async function getAllReports(): Promise<DomainReport[]> {
   });
 }
 
-// refreshAll re-checks every relay domain and persists — the periodic job.
-async function refreshAll(log: { error: (o: unknown, m?: string) => void }): Promise<void> {
+// refreshAll re-checks every relay domain and persists. Only the periodic job
+// dispatches alerts (dispatch=true); an on-demand "re-check all" must not fire
+// alerts, so the POST handler passes dispatch=false.
+async function refreshAll(log: { error: (o: unknown, m?: string) => void }, dispatch: boolean): Promise<void> {
   const { rows } = await pool.query<{ domain: string }>("select domain from relay_domains");
-  await mapLimit(rows, 4, async (d) => {
+  const reports = await mapLimit(rows, 4, async (d) => {
     try {
-      await persistCheck(await checkDomain(d.domain));
+      const rep = await checkDomain(d.domain);
+      await persistCheck(rep);
+      return rep;
     } catch (err) {
       log.error({ err, domain: d.domain }, "deliverability refresh failed");
+      return null;
     }
   });
+  if (dispatch) await dispatchAlerts(reports.filter((r): r is DomainReport => r !== null), log);
 }
 
 export function registerDeliverability(app: FastifyInstance): void {
@@ -477,7 +484,7 @@ export function registerDeliverability(app: FastifyInstance): void {
 
   // Force a fresh re-check of all domains, persist, return ("re-check all").
   app.post("/api/deliverability/check", async () => {
-    await refreshAll(app.log);
+    await refreshAll(app.log, false); // on-demand: never alerts
     return getAllReports();
   });
 
@@ -516,7 +523,7 @@ export function registerDeliverability(app: FastifyInstance): void {
   const parsed = Number(process.env.NOVAMAIL_DELIVERABILITY_INTERVAL_HOURS);
   const hours = Number.isFinite(parsed) && parsed > 0 ? parsed : 6;
   const ms = hours * 3_600_000;
-  setTimeout(() => refreshAll(app.log).catch(() => {}), 30_000).unref();
-  setInterval(() => refreshAll(app.log).catch(() => {}), ms).unref();
+  setTimeout(() => refreshAll(app.log, true).catch(() => {}), 30_000).unref();
+  setInterval(() => refreshAll(app.log, true).catch(() => {}), ms).unref();
   app.log.info({ intervalHours: hours }, "deliverability scheduler started");
 }
