@@ -15,6 +15,7 @@ import "./proto/screens2.jsx";
 import "./proto/dashboard.jsx";
 import "./proto/messages.jsx";
 import "./proto/providers.jsx";
+import "./proto/deliverability.jsx";
 import "./proto/queue.jsx";
 import "./proto/settings.jsx";
 import "./proto/login.jsx";
