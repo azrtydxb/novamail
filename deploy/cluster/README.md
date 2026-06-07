@@ -35,7 +35,7 @@ kubectl apply -f deps/mailpit.yaml               # test upstream only
 kubectl -n novamail create secret generic novamail-postgres \
   --from-literal=POSTGRES_USER=novamail --from-literal=POSTGRES_PASSWORD=<pw> \
   --from-literal=POSTGRES_DB=novamail \
-  --from-literal=DSN='postgres://novamail:<pw>@novamail-pg-rw:5432/novamail?sslmode=disable'
+  --from-literal=DSN='postgres://novamail:<pw>@novamail-pg-rw:5432/novamail?sslmode=verify-full&sslrootcert=/etc/novamail/pgtls/ca.crt&sslcert=/etc/novamail/pgtls/tls.crt&sslkey=/etc/novamail/pgtls/tls.key'
 # (DSN host is the CloudNativePG -rw service, which always points at the current primary)
 
 # Bus: the operator creates nova-bus-default-user; expose it to the apps as AMQP_URL
@@ -56,4 +56,24 @@ Applied by the one-shot Job (runs every `migrations/*.sql` in order):
 ```
 kubectl -n novamail create configmap novamail-migrations --from-file=../../migrations
 kubectl apply -f deps/migrate-job.yaml
+```
+
+
+## Postgres mutual TLS
+
+The data plane + admin-api connect with `sslmode=verify-full` and a client
+certificate (the chart mounts the CNPG CA + `novamail-pg-client` at
+`/etc/novamail/pgtls`). To (re)issue the client cert:
+
+```sh
+./deps/gen-pg-client-cert.sh novamail
+```
+
+To require client certs server-side (full mutual TLS enforcement), set the
+CNPG pg_hba so app connections must present a CA-signed cert — run AFTER all
+pods mount the cert (else live connections break):
+
+```sh
+kubectl -n novamail patch cluster novamail-pg --type merge -p \
+  '{"spec":{"postgresql":{"pg_hba":["hostssl all all all scram-sha-256 clientcert=verify-ca"]}}}'
 ```

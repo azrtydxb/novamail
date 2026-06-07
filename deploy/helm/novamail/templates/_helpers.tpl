@@ -83,3 +83,30 @@ app.kubernetes.io/component: web
 - secretRef:
     name: {{ .Values.secrets.rabbitmq }}
 {{- end -}}
+
+{{/* Postgres mTLS client material (CA + client cert) mounted for verify-full + client auth */}}
+{{- define "novamail.pgtls.volumeMount" -}}
+{{- if .Values.pgmtls.enabled }}
+- name: pgtls
+  mountPath: {{ .Values.pgmtls.mountPath }}
+  readOnly: true
+{{- end }}
+{{- end -}}
+
+{{- define "novamail.pgtls.volume" -}}
+{{- if .Values.pgmtls.enabled }}
+- name: pgtls
+  projected:
+    defaultMode: 0644
+    sources:
+      - secret:
+          name: {{ .Values.pgmtls.caSecret }}
+          items:
+            - { key: ca.crt, path: ca.crt }
+      - secret:
+          name: {{ .Values.pgmtls.clientSecret }}
+          items:
+            - { key: tls.crt, path: tls.crt }
+            - { key: tls.key, path: tls.key }
+{{- end }}
+{{- end -}}

@@ -76,6 +76,7 @@ spec:
           resources:
             {{- toYaml .Values.ingressApp.resources | nindent 12 }}
           volumeMounts:
+            {{- include "novamail.pgtls.volumeMount" . | nindent 12 }}
             - name: bodies
               mountPath: {{ .Values.bodyStore.mountPath }}
             {{- if .Values.tls.enabled }}
@@ -84,6 +85,7 @@ spec:
               readOnly: true
             {{- end }}
       volumes:
+        {{- include "novamail.pgtls.volume" . | nindent 8 }}
         - name: bodies
           {{- if .Values.bodyStore.enabled }}
           persistentVolumeClaim:
