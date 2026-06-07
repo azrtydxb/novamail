@@ -1,0 +1,50 @@
+{{/*
+HorizontalPodAutoscalers for the horizontally-scalable services. CPU-driven via
+metrics-server (the data plane is stateless/queue-driven, so scaling out adds
+throughput). RabbitMQ is intentionally NOT autoscaled — it's a stateful quorum
+cluster; scale it vertically. For queue-depth-based scaling of delivery, install
+KEDA and swap this for a RabbitMQ ScaledObject. The scaleDown stabilization
+window avoids flapping when traffic is bursty.
+*/}}
+{{- range $svc := list
+      (dict "suffix" "ingress"   "cfg" .Values.ingressApp.autoscaling)
+      (dict "suffix" "delivery"  "cfg" .Values.delivery.autoscaling)
+      (dict "suffix" "admin-api" "cfg" .Values.adminApi.autoscaling)
+      (dict "suffix" "web"       "cfg" .Values.web.autoscaling) }}
+{{- if $svc.cfg.enabled }}
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: {{ include "novamail.fullname" $ }}-{{ $svc.suffix }}
+  labels:
+    {{- include "novamail.labels" $ | nindent 4 }}
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: {{ include "novamail.fullname" $ }}-{{ $svc.suffix }}
+  minReplicas: {{ $svc.cfg.minReplicas }}
+  maxReplicas: {{ $svc.cfg.maxReplicas }}
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: {{ $svc.cfg.targetCPUUtilizationPercentage | default 70 }}
+  behavior:
+    scaleDown:
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleUp:
+      stabilizationWindowSeconds: 0
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 30
+{{- end }}
+{{- end }}

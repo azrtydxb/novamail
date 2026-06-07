@@ -6,7 +6,9 @@ metadata:
     {{- include "novamail.labels" . | nindent 4 }}
     app.kubernetes.io/component: delivery
 spec:
+  {{- if not .Values.delivery.autoscaling.enabled }}
   replicas: {{ .Values.delivery.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "novamail.delivery.selectorLabels" . | nindent 6 }}

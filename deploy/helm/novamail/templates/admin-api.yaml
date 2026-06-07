@@ -7,7 +7,9 @@ metadata:
     {{- include "novamail.labels" . | nindent 4 }}
     app.kubernetes.io/component: admin-api
 spec:
+  {{- if not .Values.adminApi.autoscaling.enabled }}
   replicas: {{ .Values.adminApi.replicas }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "novamail.admin.selectorLabels" . | nindent 6 }}
