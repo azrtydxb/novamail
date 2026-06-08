@@ -522,13 +522,14 @@ export function registerDeliverability(app: FastifyInstance): void {
   // Periodic background refresh keeps the cache fresh (+ history for regressions).
   // The cadence is a DB setting (Settings page), not env — re-read each cycle so a
   // GUI change takes effect on the next tick without a restart (config-placement rule).
+  let lastGoodHours = 6;
   async function intervalHours(): Promise<number> {
     try {
       const { rows } = await pool.query("SELECT (value#>>'{}')::numeric AS h FROM settings WHERE key='deliverability_interval_hours'");
       const h = Number(rows[0]?.h);
-      if (Number.isFinite(h) && h > 0) return h;
-    } catch { /* fall back to default */ }
-    return 6;
+      if (Number.isFinite(h) && h > 0) { lastGoodHours = h; return h; }
+    } catch { /* keep last known-good cadence rather than snapping to a default */ }
+    return lastGoodHours;
   }
   async function tick(): Promise<void> {
     await refreshAll(app.log, true).catch(() => {});

@@ -58,8 +58,11 @@ func main() {
 		logger.Error("init postgres", "err", err)
 		os.Exit(1)
 	}
-	// Relay identity used in bounce (DSN) messages is a DB setting, not env.
-	hostname := database.GetSettingString(initCtx, "hostname", "novamail.local")
+	// Relay identity used in bounce (DSN) messages is a DB setting, not env. Use a
+	// fresh short context so a near-expiry initCtx can't silently force the default.
+	hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	hostname := database.GetSettingString(hctx, "hostname", "novamail.local")
+	hcancel()
 	defer database.Close()
 	bodies, err := store.Open(env("NOVAMAIL_BODY_STORE", "postgres"), database.Pool())
 	if err != nil {
