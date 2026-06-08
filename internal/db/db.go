@@ -86,7 +86,9 @@ func (d *DB) GetSettingInt(ctx context.Context, key string, def int64) int64 {
 // in the management GUI — Postgres is the single source of truth, not env.
 func (d *DB) GetSettingString(ctx context.Context, key, def string) string {
 	var v string
-	err := d.pool.QueryRow(ctx, "SELECT value#>>'{}' FROM settings WHERE key=$1", key).Scan(&v)
+	// NULLIF(btrim(...),'') so absent, empty, or whitespace-only values all fall
+	// back to def (a whitespace EHLO name would be invalid).
+	err := d.pool.QueryRow(ctx, "SELECT NULLIF(btrim(value#>>'{}'), '') FROM settings WHERE key=$1", key).Scan(&v)
 	if err != nil || v == "" {
 		return def
 	}

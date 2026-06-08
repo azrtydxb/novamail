@@ -93,23 +93,29 @@ async function alertFrom(): Promise<string> {
 // auth is needed. The alert sender (Settings → alert_from) must be a permitted
 // relay sender.
 async function injectEmail(to: string[], subject: string, text: string): Promise<{ ok: boolean; detail: string }> {
-  const from = await alertFrom();
-  if (!from) return { ok: false, detail: "alert sender not configured (set it in Settings)" };
   if (to.length === 0) return { ok: false, detail: "no recipient" };
   const id = randomUUID();
-  const body = Buffer.from(
-    `From: NovaMail Alerts <${from}>\r\n` +
-      `To: ${to.join(", ")}\r\n` +
-      `Subject: ${subject}\r\n` +
-      `Date: ${new Date().toUTCString()}\r\n` +
-      `Message-ID: <${id}@novamail>\r\n` +
-      `Content-Type: text/plain; charset=utf-8\r\n` +
-      `\r\n${text}\r\n`,
-    "utf8",
-  );
-  const senderDomain = (from.split("@")[1] ?? "").toLowerCase();
-  const recipientDomain = (to[0].split("@")[1] ?? "").toLowerCase();
   try {
+    // Read the sender inside the try so a DB error returns the structured result
+    // rather than throwing. Reject CR/LF in the operator-set From / recipients to
+    // prevent header injection via the Settings/channel values.
+    const from = await alertFrom();
+    if (!from) return { ok: false, detail: "alert sender not configured (set it in Settings)" };
+    if (/[\r\n]/.test(from) || to.some((r) => /[\r\n]/.test(r))) {
+      return { ok: false, detail: "sender or recipient contains illegal characters" };
+    }
+    const body = Buffer.from(
+      `From: NovaMail Alerts <${from}>\r\n` +
+        `To: ${to.join(", ")}\r\n` +
+        `Subject: ${subject}\r\n` +
+        `Date: ${new Date().toUTCString()}\r\n` +
+        `Message-ID: <${id}@novamail>\r\n` +
+        `Content-Type: text/plain; charset=utf-8\r\n` +
+        `\r\n${text}\r\n`,
+      "utf8",
+    );
+    const senderDomain = (from.split("@")[1] ?? "").toLowerCase();
+    const recipientDomain = (to[0].split("@")[1] ?? "").toLowerCase();
     await pool.query("INSERT INTO message_bodies (id, body) VALUES ($1,$2)", [id, body]);
     await pool.query(
       "INSERT INTO messages (id, mail_from, rcpt_to, body_ref, body_backend, status, subject, size_bytes) VALUES ($1,$2,$3,$4,'pg','queued',$5,$6)",
