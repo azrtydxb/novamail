@@ -51,7 +51,7 @@ spec:
           env:
             - name: NOVAMAIL_DELIVERY_CONCURRENCY
               value: {{ .Values.delivery.concurrency | default 16 | quote }}
-            {{- /* Direct-to-MX EHLO FQDN is DB-driven (Settings → direct_helo), not env. */}}
+            {{/* Direct-to-MX EHLO FQDN is DB-driven (Settings → direct_helo), not env. */}}
             {{- include "novamail.tracingEnv" . | nindent 12 }}
             {{- range $k, $v := .Values.delivery.env }}
             - name: {{ $k }}
@@ -70,8 +70,8 @@ spec:
                   name: {{ .Values.secretKeySecret }}
                   key: NOVAMAIL_SECRET_KEY
                   optional: true
-            {{- /* DKIM signing is fully DB-driven (dkim_keys, GUI-managed,
-                   envelope-encrypted). No env signer / mounted key. */}}
+            {{/* DKIM signing is fully DB-driven (dkim_keys, GUI-managed,
+                 envelope-encrypted). No env signer / mounted key. */}}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 3

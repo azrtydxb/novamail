@@ -151,7 +151,9 @@ func main() {
 	defer func() { _ = shutdownTracing(context.Background()) }()
 
 	// DKIM signing is entirely DB-driven (dkim_keys table, managed via the GUI,
-	// envelope-encrypted keys) and hot-reloaded in buildState — no env signer.
+	// envelope-encrypted keys) and hot-reloaded in buildState — no env signer. It
+	// requires the KEK (NOVAMAIL_SECRET_KEY) to decrypt keys; buildState warns if
+	// keys exist without it.
 	w := &worker{store: bodies, db: database, bus: bus, secretDir: secretDir, log: logger, tracer: tracer}
 	w.state.Store(buildState(initCtx, database, cipher, secretDir, logger))
 
@@ -504,13 +506,17 @@ func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, se
 		instances[p.ID] = inst
 	}
 	// DB-driven DKIM signers (per domain, active selector). Private keys are
-	// decrypted from the secret store with the KEK.
+	// decrypted from the secret store with the KEK — so DKIM signing requires
+	// NOVAMAIL_SECRET_KEY; without it, keys can't be decrypted and signing is off.
 	dkimByDomain := map[string]*dkim.Signer{}
+	keys, kerr := database.GetActiveDKIMKeys(ctx)
+	if kerr != nil {
+		logger.Error("load dkim keys", "err", kerr)
+	}
+	if len(keys) > 0 && cipher == nil {
+		logger.Warn("DKIM keys are configured but NOVAMAIL_SECRET_KEY (KEK) is unset; outbound mail will NOT be DKIM-signed", "keys", len(keys))
+	}
 	if cipher != nil {
-		keys, kerr := database.GetActiveDKIMKeys(ctx)
-		if kerr != nil {
-			logger.Error("load dkim keys", "err", kerr)
-		}
 		for _, k := range keys {
 			if k.PrivateRef == "" {
 				continue
