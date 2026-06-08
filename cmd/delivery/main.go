@@ -193,7 +193,7 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
-	logger.Info("delivery worker started", "concurrency", concurrency, "smarthost", os.Getenv("NOVAMAIL_SMARTHOST_ADDR"))
+	logger.Info("delivery worker started", "concurrency", concurrency)
 
 	// A bounded pool of handlers consumes the shared delivery channel in parallel.
 	// Acks are per-message and order-independent (quorum queues), so out-of-order

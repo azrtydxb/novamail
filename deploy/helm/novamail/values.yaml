@@ -235,6 +235,6 @@ tracing:
   enabled: true
   otlpEndpoint: "jaeger.observability:4317"
 
-# Deliverability checks (Phase 3/4): periodic refresh interval (hours).
-deliverability:
-  intervalHours: 6
+# NOTE: the deliverability check interval is an operational setting, set in the
+# GUI (Settings → Deliverability check interval / settings.deliverability_interval_hours
+# in Postgres), not here.
