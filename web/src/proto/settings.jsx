@@ -43,6 +43,19 @@ function SettingNumber({ value, suffix, onSave }) {
   );
 }
 
+function SettingText({ value, placeholder, onSave }) {
+  const [v, setV] = React.useState(value || '');
+  React.useEffect(() => { setV(value || ''); }, [value]);
+  const dirty = v.trim() !== String(value || '').trim();
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+      <input value={v} placeholder={placeholder} onChange={(e) => setV(e.target.value)} spellCheck={false} autoComplete="off"
+        className="mono" style={{ width: 240, padding: '7px 9px', borderRadius: 6, background: 'var(--bg-input)', border: '1px solid var(--line)', color: 'var(--fg)', fontSize: 12.5, outline: 'none' }} />
+      <Btn size="sm" kind={dirty ? 'primary' : undefined} disabled={!dirty} onClick={() => onSave(v.trim())}>save</Btn>
+    </div>
+  );
+}
+
 function Settings({ t, setTweak }) {
   useDataVersion();
   const { SERVER, METRICS, SETTINGS } = window.NM_DATA;
@@ -96,6 +109,15 @@ function Settings({ t, setTweak }) {
                   </div>
                 ))}
               </div>
+            </SettingRow>
+          </SettingsCard>
+
+          <SettingsCard title="Delivery identity">
+            <SettingRow label="Alert sender" desc="From address for deliverability alert emails (relayed through NovaMail itself; must be a permitted sender)">
+              <SettingText value={SETTINGS.alert_from} placeholder="alerts@yourdomain.com" onSave={(v) => saveSetting('alert_from', v)} />
+            </SettingRow>
+            <SettingRow label="Direct-to-MX HELO" desc="EHLO/HELO FQDN used when delivering direct-to-MX — must be a real FQDN with matching reverse (PTR) DNS" last>
+              <SettingText value={SETTINGS.direct_helo} placeholder="mail.yourdomain.com" onSave={(v) => saveSetting('direct_helo', v)} />
             </SettingRow>
           </SettingsCard>
 

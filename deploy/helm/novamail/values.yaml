@@ -68,9 +68,8 @@ dsn:
 adminApi:
   enabled: true
   replicas: 2
-  # From-address for email deliverability alerts (Phase 4). Must be a permitted
-  # relay sender domain. Empty ⇒ email alert channels report "not configured".
-  alertFrom: ""
+  # NOTE: the email-alert From address is operational config, set in the GUI
+  # (Settings → Alert sender / settings.alert_from in Postgres), not here.
   autoscaling:
     enabled: true
     minReplicas: 2
@@ -112,10 +111,9 @@ delivery:
   # send; concurrency, not CPU, fills the pipeline). The SMTP connection pool is
   # sized to match. Tune up if the upstream provider can absorb more in parallel.
   concurrency: 16
-  # EHLO name for direct-to-MX providers (type "direct"). Must be a real FQDN with
-  # matching forward + reverse (PTR) DNS for deliverability. Empty ⇒ "localhost"
-  # (only acceptable for in-cluster testing). Direct-to-MX also needs outbound :25.
-  directHelo: ""
+  # NOTE: the direct-to-MX EHLO FQDN is operational config, set in the GUI
+  # (Settings → Direct-to-MX HELO / settings.direct_helo in Postgres), not here.
+  # It must be a real FQDN with matching PTR; direct-to-MX also needs outbound :25.
   replicas: 2
   # CPU HPA is superseded by KEDA queue-depth scaling below (delivery is
   # I/O-bound on upstream SMTP, so the work-queue backlog is the right signal).

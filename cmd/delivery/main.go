@@ -108,12 +108,6 @@ func main() {
 	concurrency := envInt("NOVAMAIL_DELIVERY_CONCURRENCY", 16)
 	providers.DefaultMaxIdleConns = concurrency
 
-	// EHLO/HELO name for direct-to-MX providers. For good deliverability it must
-	// be a real FQDN with matching forward + reverse (PTR) DNS.
-	if helo := os.Getenv("NOVAMAIL_DELIVERY_HELO"); helo != "" {
-		providers.DirectHELO = helo
-	}
-
 	initCtx, initCancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer initCancel()
 	database, err := db.Open(initCtx, os.Getenv("DSN"))
@@ -464,6 +458,11 @@ func (w *worker) defer_(ctx context.Context, d amqp091.Delivery, job *model.Rela
 // builds an immutable snapshot. On a DB error it logs and returns whatever it
 // could build (so a transient blip never crashes the worker mid-run).
 func buildState(ctx context.Context, database *db.DB, cipher *secrets.Cipher, secretDir string, logger *slog.Logger) *routeState {
+	// Direct-to-MX EHLO/HELO FQDN is DB-driven (Settings page) and hot-reloaded
+	// here on every config.changed. For good deliverability it must be a real FQDN
+	// with matching forward + reverse (PTR) DNS; defaults to "localhost" when unset.
+	providers.DirectHELO = database.GetSettingString(ctx, "direct_helo", "localhost")
+
 	provs, err := database.GetProviders(ctx)
 	if err != nil {
 		logger.Error("load providers", "err", err)

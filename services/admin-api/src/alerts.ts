@@ -81,12 +81,20 @@ async function postWebhook(url: string, body: unknown): Promise<{ ok: boolean; d
 
 // ── Email via the relay itself ────────────────────────────────────────────────
 
+// alertFrom reads the alert sender from the DB settings (Settings page). Postgres
+// is the single source of truth for operational config — never env.
+async function alertFrom(): Promise<string> {
+  const { rows } = await pool.query("SELECT value#>>'{}' AS v FROM settings WHERE key='alert_from'");
+  return (rows[0]?.v ?? "").trim();
+}
+
 // injectEmail submits an alert email through NovaMail's own relay path (body
 // store + message row + relay job) — the same handoff ingress does, so no SMTP
-// auth is needed. NOVAMAIL_ALERT_FROM must be a permitted relay sender.
+// auth is needed. The alert sender (Settings → alert_from) must be a permitted
+// relay sender.
 async function injectEmail(to: string[], subject: string, text: string): Promise<{ ok: boolean; detail: string }> {
-  const from = process.env.NOVAMAIL_ALERT_FROM;
-  if (!from) return { ok: false, detail: "NOVAMAIL_ALERT_FROM not configured" };
+  const from = await alertFrom();
+  if (!from) return { ok: false, detail: "alert sender not configured (set it in Settings)" };
   if (to.length === 0) return { ok: false, detail: "no recipient" };
   const id = randomUUID();
   const body = Buffer.from(

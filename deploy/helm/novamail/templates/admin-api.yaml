@@ -53,11 +53,7 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.adminApi.port | quote }}
-            {{- if .Values.adminApi.alertFrom }}
-            # From-address for email deliverability alerts (must be a permitted relay sender).
-            - name: NOVAMAIL_ALERT_FROM
-              value: {{ .Values.adminApi.alertFrom | quote }}
-            {{- end }}
+            {{- /* Alert sender is DB-driven (Settings → alert_from), not env. */}}
             {{- if .Values.deliverability }}
             - name: NOVAMAIL_DELIVERABILITY_INTERVAL_HOURS
               value: {{ .Values.deliverability.intervalHours | default 6 | quote }}

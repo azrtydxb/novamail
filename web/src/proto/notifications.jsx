@@ -64,7 +64,7 @@ function Notifications() {
                 options={[{ value: 'warning', label: 'warn+' }, { value: 'error', label: 'errors' }]} />
             </div>
           </div>
-          {form.type === 'email' && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--fg-4)' }}>Email is delivered through NovaMail's own relay (set NOVAMAIL_ALERT_FROM to a permitted sender).</div>}
+          {form.type === 'email' && <div style={{ marginTop: 8, fontSize: 11, color: 'var(--fg-4)' }}>Email is delivered through NovaMail's own relay. Set the alert sender under Settings → Delivery identity (must be a permitted sender).</div>}
           <div style={{ marginTop: 12 }}><Btn kind="primary" size="sm" icon={<I.Plus size={13} />} onClick={add}>{busy ? 'adding…' : 'add channel'}</Btn></div>
         </Card>
 
