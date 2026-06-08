@@ -53,11 +53,8 @@ spec:
           env:
             - name: PORT
               value: {{ .Values.adminApi.port | quote }}
-            {{- /* Alert sender is DB-driven (Settings → alert_from), not env. */}}
-            {{- if .Values.deliverability }}
-            - name: NOVAMAIL_DELIVERABILITY_INTERVAL_HOURS
-              value: {{ .Values.deliverability.intervalHours | default 6 | quote }}
-            {{- end }}
+            {{- /* Alert sender, hostname, and the deliverability check interval are
+                   DB-driven operational settings (Settings page), not env. */}}
             - name: NOVAMAIL_ADMIN_API_KEY
               valueFrom:
                 secretKeyRef:

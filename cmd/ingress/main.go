@@ -123,7 +123,12 @@ func main() {
 		os.Exit(1)
 	}
 	smtpSrv := smtp.NewServer(be)
-	smtpSrv.Domain = env("NOVAMAIL_HOSTNAME", "novamail.local")
+	// Relay identity / EHLO banner is a DB setting (Settings page), not env —
+	// Postgres is the single source of truth for operational config. Use a fresh
+	// short context so a near-expiry initCtx can't silently force the default.
+	hctx, hcancel := context.WithTimeout(context.Background(), 5*time.Second)
+	smtpSrv.Domain = database.GetSettingString(hctx, "hostname", "novamail.local")
+	hcancel()
 	smtpSrv.ReadTimeout = 60 * time.Second
 	smtpSrv.WriteTimeout = 60 * time.Second
 	smtpSrv.MaxMessageBytes = 50 << 20 // 50 MiB

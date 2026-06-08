@@ -96,6 +96,9 @@ function Settings({ t, setTweak }) {
           </SettingsCard>
 
           <SettingsCard title="Server identity">
+            <SettingRow label="Hostname" desc="EHLO/HELO banner the relay presents on the submission/SMTP ports and in bounce (DSN) messages">
+              <SettingText value={SETTINGS.hostname} placeholder="novamail.local" onSave={(v) => saveSetting('hostname', v)} />
+            </SettingRow>
             <SettingRow label="Relay name"><span className="mono" style={{ fontSize: 12.5, color: 'var(--fg-1)' }}>{SERVER.name}</span></SettingRow>
             <SettingRow label="Version"><Chip tone="accent">{SERVER.version}</Chip></SettingRow>
             <SettingRow label="Cluster nodes" desc="RabbitMQ quorum · nova-bus" last>
@@ -137,8 +140,11 @@ function Settings({ t, setTweak }) {
             <SettingRow label="Max message size" desc="Submissions over this are rejected 552 (hot-reloaded)">
               <SettingNumber value={maxMiB} suffix="MiB" onSave={(v) => saveSetting('max_message_bytes', v * 1048576)} />
             </SettingRow>
-            <SettingRow label="Retention" desc="Daily sweep prunes delivered/bounced messages older than this" last>
+            <SettingRow label="Retention" desc="Daily sweep prunes delivered/bounced messages older than this">
               <SettingNumber value={retention} suffix="days" onSave={(v) => saveSetting('retention_days', v)} />
+            </SettingRow>
+            <SettingRow label="Deliverability check interval" desc="How often the periodic DNS/deliverability checker refreshes (regression alerts)" last>
+              <SettingNumber value={Number(SETTINGS.deliverability_interval_hours) || 6} suffix="hrs" onSave={(v) => saveSetting('deliverability_interval_hours', v)} />
             </SettingRow>
           </SettingsCard>
         </div>
