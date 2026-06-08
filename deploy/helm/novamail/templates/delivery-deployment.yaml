@@ -70,14 +70,8 @@ spec:
                   name: {{ .Values.secretKeySecret }}
                   key: NOVAMAIL_SECRET_KEY
                   optional: true
-            {{- if .Values.delivery.dkim.enabled }}
-            - name: NOVAMAIL_DKIM_DOMAIN
-              value: {{ .Values.delivery.dkim.domain | quote }}
-            - name: NOVAMAIL_DKIM_SELECTOR
-              value: {{ .Values.delivery.dkim.selector | quote }}
-            - name: NOVAMAIL_DKIM_KEY
-              value: {{ printf "%s/%s" .Values.delivery.dkim.mountPath .Values.delivery.dkim.keyFile | quote }}
-            {{- end }}
+            {{- /* DKIM signing is fully DB-driven (dkim_keys, GUI-managed,
+                   envelope-encrypted). No env signer / mounted key. */}}
           livenessProbe:
             httpGet: { path: /healthz, port: http }
             initialDelaySeconds: 3
@@ -93,11 +87,6 @@ spec:
             {{- include "novamail.amqptls.volumeMount" . | nindent 12 }}
             - name: bodies
               mountPath: {{ .Values.bodyStore.mountPath }}
-            {{- if .Values.delivery.dkim.enabled }}
-            - name: dkim
-              mountPath: {{ .Values.delivery.dkim.mountPath }}
-              readOnly: true
-            {{- end }}
             {{- if .Values.delivery.providerSecrets.enabled }}
             - name: provider-secrets
               mountPath: {{ .Values.delivery.providerSecrets.mountPath }}
@@ -113,11 +102,6 @@ spec:
           {{- else }}
           emptyDir: {}
           {{- end }}
-        {{- if .Values.delivery.dkim.enabled }}
-        - name: dkim
-          secret:
-            secretName: {{ .Values.delivery.dkim.secretName }}
-        {{- end }}
         {{- if .Values.delivery.providerSecrets.enabled }}
         - name: provider-secrets
           secret:

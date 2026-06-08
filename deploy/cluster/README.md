@@ -43,10 +43,10 @@ NBU=$(kubectl -n novamail get secret nova-bus-default-user -o jsonpath='{.data.u
 NBP=$(kubectl -n novamail get secret nova-bus-default-user -o jsonpath='{.data.password}' | base64 -d)
 kubectl -n novamail create secret generic novamail-rabbitmq \
   --from-literal=AMQP_URL="amqp://$NBU:$NBP@nova-bus:5672/"
-
-# DKIM signing key
-kubectl -n novamail create secret generic novamail-dkim --from-file=key.pem=<key.pem>
 ```
+
+DKIM signing keys are created and managed in the GUI (DKIM keys page) — they live
+envelope-encrypted in the `dkim_keys`/`secrets` tables, not in a mounted Secret.
 
 The SMTP server TLS cert (`novamail-smtp-tls`) is issued by cert-manager via the
 Helm chart's `Certificate`.
