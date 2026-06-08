@@ -16,7 +16,8 @@ import (
 
 // DirectHELO is the EHLO/HELO name used for direct-to-MX delivery. For good
 // deliverability it must be a real FQDN with matching forward + reverse (PTR)
-// DNS. The delivery worker sets this at boot from NOVAMAIL_DELIVERY_HELO.
+// DNS. The delivery worker sets it from the DB-driven `direct_helo` setting
+// (Settings page) on boot and on every config.changed reload.
 var DirectHELO = "localhost"
 
 // DirectConfig configures the direct-to-MX provider.

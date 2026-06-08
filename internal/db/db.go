@@ -81,6 +81,20 @@ func (d *DB) GetSettingInt(ctx context.Context, key string, def int64) int64 {
 	return v
 }
 
+// GetSettingString returns a text setting, or def if absent/empty. Used for
+// DB-driven server identity (alert sender, direct-to-MX HELO) the operator sets
+// in the management GUI — Postgres is the single source of truth, not env.
+func (d *DB) GetSettingString(ctx context.Context, key, def string) string {
+	var v string
+	// NULLIF(btrim(...),'') so absent, empty, or whitespace-only values all fall
+	// back to def (a whitespace EHLO name would be invalid).
+	err := d.pool.QueryRow(ctx, "SELECT NULLIF(btrim(value#>>'{}'), '') FROM settings WHERE key=$1", key).Scan(&v)
+	if err != nil || v == "" {
+		return def
+	}
+	return v
+}
+
 // PruneOld deletes terminal messages and old events beyond the retention window.
 // message_events cascade with their message; events for live messages are kept.
 func (d *DB) PruneOld(ctx context.Context, days int) (int64, error) {
