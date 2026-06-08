@@ -149,14 +149,8 @@ delivery:
     enabled: false
     secretName: novamail-provider-creds
     mountPath: /etc/novamail/provider-secrets
-  # Outbound DKIM signing. Key lives in an out-of-band Secret mounted read-only.
-  dkim:
-    enabled: true
-    domain: example.com
-    selector: s1
-    secretName: novamail-dkim
-    mountPath: /etc/novamail/dkim
-    keyFile: key.pem
+  # NOTE: outbound DKIM signing is managed entirely in the GUI (DKIM keys page →
+  # dkim_keys table, envelope-encrypted, rotation-aware). No env signer / mounted key.
 
 # Shared body store — ReadWriteMany so ingress and delivery pods share it.
 bodyStore:
