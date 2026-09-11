@@ -33,7 +33,7 @@ Taskfile.yml           # build/test/lint
 
 ## CI/CD + cluster (kw)
 
-PR → `pr-checks.yml` (go test/vet, golangci-lint, helm lint, node-check) → merge to `main` → `ci.yml` builds images on ARC runners (Go services multi-arch arm64+amd64; admin-api + web arm64) → push to Zot → `helm upgrade --install` into the `novamail` namespace → rollout. Images are **pulled via their `ghcr.io/...` name** (containerd mirrors ghcr.io → the Zot registry at `192.168.10.123`, cluster-CA TLS). The deploy job runs on the runner pod using a kubeconfig built from its in-cluster SA token (RBAC in `deploy/cluster/bootstrap-rbac.yaml`). 3-node RabbitMQ runs via the **RabbitMQ Cluster Operator** (`nova-bus`).
+PR → `pr-checks.yml` (go test/vet, golangci-lint, helm lint, node-check) → merge to `main` → `ci.yml` builds images on ARC runners (Go services multi-arch arm64+amd64; admin-api + web arm64) → push to Zot → `helm upgrade --install` into the `novamail` namespace → rollout. Images are **pulled via their `ghcr.io/...` name** (containerd mirrors ghcr.io → the Zot registry at `192.168.10.131`, cluster-CA TLS). The deploy job runs on the runner pod using a kubeconfig built from its in-cluster SA token (RBAC in `deploy/cluster/bootstrap-rbac.yaml`). 3-node RabbitMQ runs via the **RabbitMQ Cluster Operator** (`nova-bus`).
 
 Two ARM64 CI gotchas (already handled): JS actions (`actions/checkout`) can't run in **Alpine** containers on arm64 runners (use `azure/setup-*`, not `alpine/*` images); and non-root runners can't write `/usr/local/bin`.
 

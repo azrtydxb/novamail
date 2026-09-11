@@ -10,7 +10,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 ## Cluster/CI facts (kw)
 - Repo: `github.com/azrtydxb/novamail`. kubeconfig context `kw` (ARM64 k3s v1.34.4).
 - Runners: ARC scale sets `arc-azrtydxb` (compute/test/deploy) and `arc-azrtydxb-publish` (image push, ghcr trust chain).
-- Images: build native per-arch, push to `ghcr.io/azrtydxb/novamail`; arm64 buildcache → `192.168.10.123:5000/buildcache/...`, amd64 via remote BuildKit. Mirror release images to Zot `192.168.10.123:5000`.
+- Images: build native per-arch, push to `ghcr.io/azrtydxb/novamail`; arm64 buildcache → `192.168.10.131:5000/buildcache/...`, amd64 via remote BuildKit. Mirror release images to Zot `192.168.10.131:5000`.
 - Deploy: **Helm `upgrade --install` from an ARC runner** (in-cluster) against namespace `novamail`.
 - Ingress: ingress-nginx, host `*.kw.local`, `externalTrafficPolicy=Cluster`, cert-manager `cluster-ca` ClusterIssuer.
 - Storage: Longhorn — `longhorn` (default, 3-replica), `longhorn-single`. **Body store = Longhorn RWX PVC** (or NAS NFS `192.168.10.253`).

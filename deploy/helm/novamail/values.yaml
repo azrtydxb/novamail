@@ -5,7 +5,7 @@ fullnameOverride: "novamail"
 
 image:
   # Pulled via the ghcr.io name: node containerd mirrors ghcr.io -> the Zot
-  # registry at 192.168.10.123 (cluster-CA TLS), which serves the repo path CI
+  # registry at 192.168.10.131 (cluster-CA TLS), which serves the repo path CI
   # pushes. No imagePullSecret needed.
   registry: ghcr.io/azrtydxb/novamail
   # tag is the shared git sha for both images; the deploy pipeline overrides it.

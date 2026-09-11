@@ -15,8 +15,8 @@ concurrency:
 
 env:
   # Cluster Zot registry (cluster-CA trusted by node containerd).
-  REGISTRY: 192.168.10.123:5000
-  IMAGE_BASE: 192.168.10.123:5000/azrtydxb/novamail
+  REGISTRY: 192.168.10.131:5000
+  IMAGE_BASE: 192.168.10.131:5000/azrtydxb/novamail
 
 jobs:
   build-image:
@@ -32,12 +32,12 @@ jobs:
       - name: Set up buildx (zot insecure)
         run: |
           cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.123:5000"]
+          [registry."192.168.10.131:5000"]
             insecure = true
           # Pull base images (node/golang/nginx) through the cluster Zot registry's
           # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
           [registry."docker.io"]
-            mirrors = ["192.168.10.123:5000"]
+            mirrors = ["192.168.10.131:5000"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
@@ -67,12 +67,12 @@ jobs:
       - name: Set up buildx (zot insecure)
         run: |
           cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.123:5000"]
+          [registry."192.168.10.131:5000"]
             insecure = true
           # Pull base images (node/golang/nginx) through the cluster Zot registry's
           # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
           [registry."docker.io"]
-            mirrors = ["192.168.10.123:5000"]
+            mirrors = ["192.168.10.131:5000"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
@@ -100,12 +100,12 @@ jobs:
       - name: Set up buildx (zot insecure)
         run: |
           cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.123:5000"]
+          [registry."192.168.10.131:5000"]
             insecure = true
           # Pull base images (node/golang/nginx) through the cluster Zot registry's
           # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
           [registry."docker.io"]
-            mirrors = ["192.168.10.123:5000"]
+            mirrors = ["192.168.10.131:5000"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use

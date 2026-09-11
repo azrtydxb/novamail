@@ -7,7 +7,7 @@ on:
 
 env:
   GHCR_IMAGE: ghcr.io/azrtydxb/novamail/ingress
-  ZOT: 192.168.10.123:5000
+  ZOT: 192.168.10.131:5000
 
 jobs:
   image:
@@ -28,7 +28,7 @@ jobs:
       - name: Buildx (zot insecure)
         run: |
           cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.123:5000"]
+          [registry."192.168.10.131:5000"]
             insecure = true
           EOF
           docker buildx create --name nm --driver docker-container \
