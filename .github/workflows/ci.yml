@@ -49,8 +49,18 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
+      # Nexus requires credentials to push. The Zot registry this replaced
+      # accepted anonymous writes, so no login was ever needed here — the
+      # push now fails with "unauthorized: access to the requested resource
+      # is not authorized" without it. Pulls stay anonymous.
+      - name: Log in to Nexus
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
       - name: Build & push ${{ matrix.service }} (multi-arch → zot)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           builder: nm
@@ -91,8 +101,18 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
+      # Nexus requires credentials to push. The Zot registry this replaced
+      # accepted anonymous writes, so no login was ever needed here — the
+      # push now fails with "unauthorized: access to the requested resource
+      # is not authorized" without it. Pulls stay anonymous.
+      - name: Log in to Nexus
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
       - name: Build & push admin-api (multi-arch → zot)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: services/admin-api
           builder: nm
@@ -131,8 +151,18 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
+      # Nexus requires credentials to push. The Zot registry this replaced
+      # accepted anonymous writes, so no login was ever needed here — the
+      # push now fails with "unauthorized: access to the requested resource
+      # is not authorized" without it. Pulls stay anonymous.
+      - name: Log in to Nexus
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ secrets.NEXUS_USER }}
+          password: ${{ secrets.NEXUS_PASSWORD }}
       - name: Build & push web (multi-arch → zot)
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: web
           builder: nm
