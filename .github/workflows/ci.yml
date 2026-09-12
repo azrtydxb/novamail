@@ -36,8 +36,15 @@ jobs:
             insecure = true
           # Pull base images (node/golang/nginx) through the cluster Zot registry's
           # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
+          # :443, not :5000. Only the read-only group on :443 fronts the
+          # docker.io proxy; :5000 is the hosted repository and 404s on
+          # anything it was not pushed. It needs its own insecure entry too,
+          # or the mirror fails TLS and BuildKit silently falls back to
+          # Docker Hub — no error, and no benefit.
+          [registry."192.168.10.131"]
+            insecure = true
           [registry."docker.io"]
-            mirrors = ["192.168.10.131:5000"]
+            mirrors = ["192.168.10.131"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
@@ -71,8 +78,15 @@ jobs:
             insecure = true
           # Pull base images (node/golang/nginx) through the cluster Zot registry's
           # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
+          # :443, not :5000. Only the read-only group on :443 fronts the
+          # docker.io proxy; :5000 is the hosted repository and 404s on
+          # anything it was not pushed. It needs its own insecure entry too,
+          # or the mirror fails TLS and BuildKit silently falls back to
+          # Docker Hub — no error, and no benefit.
+          [registry."192.168.10.131"]
+            insecure = true
           [registry."docker.io"]
-            mirrors = ["192.168.10.131:5000"]
+            mirrors = ["192.168.10.131"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
@@ -104,8 +118,15 @@ jobs:
             insecure = true
           # Pull base images (node/golang/nginx) through the cluster Zot registry's
           # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
+          # :443, not :5000. Only the read-only group on :443 fronts the
+          # docker.io proxy; :5000 is the hosted repository and 404s on
+          # anything it was not pushed. It needs its own insecure entry too,
+          # or the mirror fails TLS and BuildKit silently falls back to
+          # Docker Hub — no error, and no benefit.
+          [registry."192.168.10.131"]
+            insecure = true
           [registry."docker.io"]
-            mirrors = ["192.168.10.131:5000"]
+            mirrors = ["192.168.10.131"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
