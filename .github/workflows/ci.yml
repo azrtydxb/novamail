@@ -1,12 +1,15 @@
 name: CI
 
-# Runs only on merges to main: build images + deploy. PR validation
+# Runs only on merges to main: builds and publishes images. PR validation
 # (go test/vet, lint, helm lint, node build) lives in pr-checks.yml, so nothing
 # is duplicated between the two workflows.
+#
+# There is no deploy step. The novamail namespace was removed from the kw
+# cluster, taking its RBAC with it; the job is in git history if it returns.
 on:
   push:
     branches: [main]
-    # Docs / bootstrap-only changes don't need an image rebuild + deploy.
+    # Docs / bootstrap-only changes don't need an image rebuild.
     paths-ignore: ["docs/**", "*.md", "**/*.md", "deploy/cluster/**", ".github/workflows/pages.yml"]
 
 concurrency:
