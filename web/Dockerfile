@@ -3,7 +3,7 @@
 # esbuild/Vite crash under QEMU emulation (write EPIPE) when cross-building amd64
 # on an arm64 runner. dist is static + arch-neutral, so the final image stays
 # multi-arch via the per-arch nginx base.
-FROM --platform=$BUILDPLATFORM node:24-alpine AS build
+FROM --platform=$BUILDPLATFORM node:26-alpine AS build
 WORKDIR /app
 COPY package*.json ./
 RUN npm install
