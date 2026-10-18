@@ -11,7 +11,7 @@ env:
 
 jobs:
   image:
-    runs-on: arc-azrtydxb-publish
+    runs-on: arc-azrtydxb
     permissions:
       contents: read
       packages: write
@@ -50,7 +50,7 @@ jobs:
 
   helm-publish:
     needs: [image]
-    runs-on: arc-azrtydxb-publish
+    runs-on: arc-azrtydxb
     permissions:
       contents: read
       packages: write

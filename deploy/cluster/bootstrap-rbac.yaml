@@ -68,10 +68,7 @@ roleRef:
   kind: Role
   name: novamail-deployer
 subjects:
-  # Both ARC scale-set runner ServiceAccounts (they ship with zero permissions).
+  # The ARC scale-set runner ServiceAccount (they ship with zero permissions).
   - kind: ServiceAccount
     name: arc-azrtydxb-gha-rs-no-permission
-    namespace: arc-runners
-  - kind: ServiceAccount
-    name: arc-azrtydxb-publish-gha-rs-no-permission
     namespace: arc-runners

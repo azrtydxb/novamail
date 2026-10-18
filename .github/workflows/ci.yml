@@ -23,7 +23,7 @@ env:
 
 jobs:
   build-image:
-    runs-on: arc-azrtydxb-publish
+    runs-on: arc-azrtydxb
     strategy:
       matrix:
         service: [ingress, delivery, dsn, maintenance]
@@ -47,7 +47,7 @@ jobs:
           [registry."192.168.10.131"]
             insecure = true
           [registry."docker.io"]
-            mirrors = ["192.168.10.131"]
+            mirrors = ["ant.azrty.com"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
@@ -78,7 +78,7 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true
 
   build-admin-api:
-    runs-on: arc-azrtydxb-publish
+    runs-on: arc-azrtydxb
     steps:
       - uses: actions/checkout@v4
       - name: Compute image tag
@@ -99,7 +99,7 @@ jobs:
           [registry."192.168.10.131"]
             insecure = true
           [registry."docker.io"]
-            mirrors = ["192.168.10.131"]
+            mirrors = ["ant.azrty.com"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
@@ -128,7 +128,7 @@ jobs:
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true
 
   build-web:
-    runs-on: arc-azrtydxb-publish
+    runs-on: arc-azrtydxb
     steps:
       - uses: actions/checkout@v4
       - name: Compute image tag
@@ -149,7 +149,7 @@ jobs:
           [registry."192.168.10.131"]
             insecure = true
           [registry."docker.io"]
-            mirrors = ["192.168.10.131"]
+            mirrors = ["ant.azrty.com"]
           EOF
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
