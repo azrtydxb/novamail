@@ -4,6 +4,14 @@ on:
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    tags: ["v*"]
+  # Three-tier test model (azrtydxb/.github docs/ci-standard.md §Test tiers).
+  # PR = fast unit/static tier: `go test -race` is folded into this workflow's
+  # test job but only runs off the PR path (see the `test` job below).
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch: {}
 
 concurrency:
   group: pr-${{ github.event.pull_request.number }}
@@ -17,7 +25,15 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: go vet ./...
-      - run: go test -race ./...
+      # PR path: hermetic unit tests only (target < 5 min).
+      - name: Unit tests
+        run: go test ./...
+      # `race` is a full-tier signal (docs/ci-standard.md §Test tiers): it runs
+      # on the nightly schedule, on a `v*` tag, and on manual dispatch, never
+      # on a pull_request.
+      - name: Unit tests (race)
+        if: ${{ github.event_name != 'pull_request' }}
+        run: go test -race ./...
 
   lint:
     runs-on: arc-azrtydxb
