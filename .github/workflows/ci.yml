@@ -77,7 +77,7 @@ jobs:
           tags: |
             ${{ env.IMAGE_BASE }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true,ignore-error=true
 
   build-admin-api:
     runs-on: arc-azrtydxb
@@ -124,7 +124,7 @@ jobs:
           tags: |
             ${{ env.IMAGE_BASE }}/admin-api:${{ steps.meta.outputs.tag }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true,ignore-error=true
 
   build-web:
     runs-on: arc-azrtydxb
@@ -171,4 +171,4 @@ jobs:
           tags: |
             ${{ env.IMAGE_BASE }}/web:${{ steps.meta.outputs.tag }}
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64
-          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64,mode=max,image-manifest=true
+          cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64,mode=max,image-manifest=true,ignore-error=true
