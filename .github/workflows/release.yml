@@ -7,7 +7,8 @@ on:
 
 env:
   GHCR_IMAGE: ghcr.io/azrtydxb/novamail/ingress
-  ZOT: 192.168.10.131:5000
+  # Authoritative Kuvryn Ant (OKE), GitHub OIDC login; kw replicates oci-hosted.
+  ANT_REGISTRY: ant.azrty.com/oci-hosted
 
 jobs:
   image:
@@ -15,6 +16,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      id-token: write
     steps:
       - uses: actions/checkout@v4
       - name: Version
@@ -25,6 +27,14 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Log in to Kuvryn Ant (GitHub OIDC)
+        uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
+        with:
+          docker-login: "true"
+          required: "true"
+          go: "false"
+          cargo: "false"
+          pip: "false"
       - name: Buildx (zot insecure)
         run: |
           cat > /tmp/buildkitd.toml <<'EOF'
@@ -34,7 +44,7 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      - name: Build & push multi-arch → ghcr + zot
+      - name: Build & push multi-arch → ghcr + Kuvryn Ant
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -45,8 +55,7 @@ jobs:
           tags: |
             ${{ env.GHCR_IMAGE }}:${{ steps.v.outputs.version }}
             ${{ env.GHCR_IMAGE }}:latest
-            ${{ env.ZOT }}/azrtydxb/novamail/ingress:${{ steps.v.outputs.version }}
-            ${{ env.ZOT }}/azrtydxb/novamail/ingress:latest
+            ${{ env.ANT_REGISTRY }}/azrtydxb/novamail/ingress:${{ steps.v.outputs.version }}
 
   helm-publish:
     needs: [image]

@@ -12,14 +12,19 @@ on:
     # Docs / bootstrap-only changes don't need an image rebuild.
     paths-ignore: ["docs/**", "*.md", "**/*.md", "deploy/cluster/**", ".github/workflows/pages.yml"]
 
+permissions:
+  contents: read
+  # GitHub OIDC for the Kuvryn Ant docker login (azrtydxb/ant-setup-action).
+  id-token: write
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 env:
-  # Cluster Zot registry (cluster-CA trusted by node containerd).
-  REGISTRY: 192.168.10.131:5000
-  IMAGE_BASE: 192.168.10.131:5000/azrtydxb/novamail
+  # Authoritative Kuvryn Ant (OKE), GitHub OIDC login; kw replicates oci-hosted.
+  REGISTRY: ant.azrty.com/oci-hosted
+  IMAGE_BASE: ant.azrty.com/oci-hosted/azrtydxb/novamail
 
 jobs:
   build-image:
@@ -52,16 +57,14 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      # Nexus requires credentials to push. The Zot registry this replaced
-      # accepted anonymous writes, so no login was ever needed here — the
-      # push now fails with "unauthorized: access to the requested resource
-      # is not authorized" without it. Pulls stay anonymous.
-      - name: Log in to Nexus
-        uses: docker/login-action@v4
+      - name: Log in to Kuvryn Ant (GitHub OIDC)
+        uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.NEXUS_USER }}
-          password: ${{ secrets.NEXUS_PASSWORD }}
+          docker-login: "true"
+          required: "true"
+          go: "false"
+          cargo: "false"
+          pip: "false"
       - name: Build & push ${{ matrix.service }} (multi-arch → zot)
         uses: docker/build-push-action@v7
         with:
@@ -73,7 +76,6 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_BASE }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_BASE }}/${{ matrix.service }}:main
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-${{ matrix.service }}:arm64,mode=max,image-manifest=true
 
@@ -104,16 +106,14 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      # Nexus requires credentials to push. The Zot registry this replaced
-      # accepted anonymous writes, so no login was ever needed here — the
-      # push now fails with "unauthorized: access to the requested resource
-      # is not authorized" without it. Pulls stay anonymous.
-      - name: Log in to Nexus
-        uses: docker/login-action@v4
+      - name: Log in to Kuvryn Ant (GitHub OIDC)
+        uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.NEXUS_USER }}
-          password: ${{ secrets.NEXUS_PASSWORD }}
+          docker-login: "true"
+          required: "true"
+          go: "false"
+          cargo: "false"
+          pip: "false"
       - name: Build & push admin-api (multi-arch → zot)
         uses: docker/build-push-action@v7
         with:
@@ -123,7 +123,6 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_BASE }}/admin-api:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_BASE }}/admin-api:main
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-admin-api:arm64,mode=max,image-manifest=true
 
@@ -154,16 +153,14 @@ jobs:
           docker buildx create --name nm --driver docker-container \
             --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
           docker buildx inspect --bootstrap
-      # Nexus requires credentials to push. The Zot registry this replaced
-      # accepted anonymous writes, so no login was ever needed here — the
-      # push now fails with "unauthorized: access to the requested resource
-      # is not authorized" without it. Pulls stay anonymous.
-      - name: Log in to Nexus
-        uses: docker/login-action@v4
+      - name: Log in to Kuvryn Ant (GitHub OIDC)
+        uses: azrtydxb/ant-setup-action@543d780ae8e4ff1fe0473a4778f18edceb995768 # v1
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ secrets.NEXUS_USER }}
-          password: ${{ secrets.NEXUS_PASSWORD }}
+          docker-login: "true"
+          required: "true"
+          go: "false"
+          cargo: "false"
+          pip: "false"
       - name: Build & push web (multi-arch → zot)
         uses: docker/build-push-action@v7
         with:
@@ -173,6 +170,5 @@ jobs:
           push: true
           tags: |
             ${{ env.IMAGE_BASE }}/web:${{ steps.meta.outputs.tag }}
-            ${{ env.IMAGE_BASE }}/web:main
           cache-from: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64
           cache-to: type=registry,ref=${{ env.REGISTRY }}/buildcache/novamail-web:arm64,mode=max,image-manifest=true
