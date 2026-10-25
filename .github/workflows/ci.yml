@@ -27,157 +27,93 @@ env:
   IMAGE_BASE: ant.azrty.com/oci-hosted/azrtydxb/novamail
 
 jobs:
-  build-image:
+  # One build per image and architecture, each on a runner of its own architecture
+  # (arc-azrtydxb = arm64, arc-azrtydxb-amd64 = amd64) with the runner pod's BuildKit
+  # sidecar, and each with its own Ant cache ref (<branch>-<image>-<arch>): two
+  # platforms writing one cache ref overwrite each other. The image is pushed by
+  # digest; the manifest job below joins the two digests under the usual tag.
+  build:
+    runs-on: ${{ matrix.arch == 'amd64' && 'arc-azrtydxb-amd64' || 'arc-azrtydxb' }}
+    strategy:
+      matrix:
+        # The Go data-plane services share the root Dockerfile (SERVICE build-arg);
+        # admin-api and web have their own context.
+        image: [ingress, delivery, dsn, maintenance, admin-api, web]
+        arch: [arm64, amd64]
+        include:
+          - image: admin-api
+            context: services/admin-api
+          - image: web
+            context: web
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up buildx (runner pod's BuildKit sidecar)
+        id: builder
+        uses: azrtydxb/.github/actions/setup-builder@d021f2ca9fa3d6682085a7d069b7c8b1dc7b9b80 # main
+      - name: Log in to Kuvryn Ant (GitHub OIDC)
+        id: ant
+        uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
+        with:
+          build-cache: "true"
+          cache-name: ${{ matrix.image }}
+          arch-suffix: ${{ matrix.arch }}
+          docker-login: "true"
+          required: "true"
+          go: "false"
+          cargo: "false"
+          pip: "false"
+      - name: Build & push ${{ matrix.image }} linux/${{ matrix.arch }} (by digest)
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: ${{ matrix.context || '.' }}
+          builder: ${{ steps.builder.outputs.name }}
+          platforms: linux/${{ matrix.arch }}
+          build-args: ${{ !matrix.context && format('SERVICE={0}', matrix.image) || '' }}
+          outputs: type=image,name=${{ env.IMAGE_BASE }}/${{ matrix.image }},push-by-digest=true,name-canonical=true,push=true
+          cache-from: ${{ steps.ant.outputs.cache-from }}
+          cache-to: ${{ steps.ant.outputs.cache-to }}
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/digests"
+          touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digests-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Joins the arm64 and amd64 digests into the multi-arch sha-<short> tag.
+  manifest:
+    needs: [build]
     runs-on: arc-azrtydxb
     strategy:
       matrix:
-        service: [ingress, delivery, dsn, maintenance]
+        image: [ingress, delivery, dsn, maintenance, admin-api, web]
     steps:
-      - uses: actions/checkout@v4
-      - name: Compute image tag
-        id: meta
-        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - name: Set up buildx (zot insecure)
-        run: |
-          cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.131:5000"]
-            insecure = true
-          # Pull base images (node/golang/nginx) through the cluster Zot registry's
-          # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
-          # :443, not :5000. Only the read-only group on :443 fronts the
-          # docker.io proxy; :5000 is the hosted repository and 404s on
-          # anything it was not pushed. It needs its own insecure entry too,
-          # or the mirror fails TLS and BuildKit silently falls back to
-          # Docker Hub — no error, and no benefit.
-          [registry."192.168.10.131"]
-            insecure = true
-          [registry."docker.io"]
-            mirrors = ["ant.azrty.com"]
-          EOF
-          docker buildx create --name nm --driver docker-container \
-            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
-          docker buildx inspect --bootstrap
+      - uses: actions/download-artifact@v4
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: digests-${{ matrix.image }}-*
+          merge-multiple: true
       - name: Log in to Kuvryn Ant (GitHub OIDC)
-        id: ant
         uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
         with:
-          build-cache: "true"
-          cache-name: ${{ matrix.service }}
           docker-login: "true"
           required: "true"
           go: "false"
           cargo: "false"
           pip: "false"
-      - name: Build & push ${{ matrix.service }} (multi-arch → zot)
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          builder: nm
-          # Multi-arch (arm64 for kw + amd64 for portability). Go cross-compiles (no QEMU).
-          platforms: linux/arm64,linux/amd64
-          build-args: SERVICE=${{ matrix.service }}
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/${{ matrix.service }}:${{ steps.meta.outputs.tag }}
-          cache-from: ${{ steps.ant.outputs.cache-from }}
-          cache-to: ${{ steps.ant.outputs.cache-to }}
-
-  build-admin-api:
-    runs-on: arc-azrtydxb
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compute image tag
-        id: meta
-        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - name: Set up buildx (zot insecure)
+      - name: Create & push ${{ matrix.image }} manifest list
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          IMAGE: ${{ env.IMAGE_BASE }}/${{ matrix.image }}
         run: |
-          cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.131:5000"]
-            insecure = true
-          # Pull base images (node/golang/nginx) through the cluster Zot registry's
-          # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
-          # :443, not :5000. Only the read-only group on :443 fronts the
-          # docker.io proxy; :5000 is the hosted repository and 404s on
-          # anything it was not pushed. It needs its own insecure entry too,
-          # or the mirror fails TLS and BuildKit silently falls back to
-          # Docker Hub — no error, and no benefit.
-          [registry."192.168.10.131"]
-            insecure = true
-          [registry."docker.io"]
-            mirrors = ["ant.azrty.com"]
-          EOF
-          docker buildx create --name nm --driver docker-container \
-            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
-          docker buildx inspect --bootstrap
-      - name: Log in to Kuvryn Ant (GitHub OIDC)
-        id: ant
-        uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
-        with:
-          build-cache: "true"
-          cache-name: admin-api
-          docker-login: "true"
-          required: "true"
-          go: "false"
-          cargo: "false"
-          pip: "false"
-      - name: Build & push admin-api (multi-arch → zot)
-        uses: docker/build-push-action@v7
-        with:
-          context: services/admin-api
-          builder: nm
-          platforms: linux/arm64,linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/admin-api:${{ steps.meta.outputs.tag }}
-          cache-from: ${{ steps.ant.outputs.cache-from }}
-          cache-to: ${{ steps.ant.outputs.cache-to }}
-
-  build-web:
-    runs-on: arc-azrtydxb
-    steps:
-      - uses: actions/checkout@v4
-      - name: Compute image tag
-        id: meta
-        run: echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
-      - name: Set up buildx (zot insecure)
-        run: |
-          cat > /tmp/buildkitd.toml <<'EOF'
-          [registry."192.168.10.131:5000"]
-            insecure = true
-          # Pull base images (node/golang/nginx) through the cluster Zot registry's
-          # Docker Hub pull-through cache — never hit docker.io anonymously (429s).
-          # :443, not :5000. Only the read-only group on :443 fronts the
-          # docker.io proxy; :5000 is the hosted repository and 404s on
-          # anything it was not pushed. It needs its own insecure entry too,
-          # or the mirror fails TLS and BuildKit silently falls back to
-          # Docker Hub — no error, and no benefit.
-          [registry."192.168.10.131"]
-            insecure = true
-          [registry."docker.io"]
-            mirrors = ["ant.azrty.com"]
-          EOF
-          docker buildx create --name nm --driver docker-container \
-            --platform linux/arm64,linux/amd64 --buildkitd-config /tmp/buildkitd.toml --use
-          docker buildx inspect --bootstrap
-      - name: Log in to Kuvryn Ant (GitHub OIDC)
-        id: ant
-        uses: azrtydxb/ant-setup-action@549f7472cf26b0885441ed9f9a7fab0277545000 # v1
-        with:
-          build-cache: "true"
-          cache-name: web
-          docker-login: "true"
-          required: "true"
-          go: "false"
-          cargo: "false"
-          pip: "false"
-      - name: Build & push web (multi-arch → zot)
-        uses: docker/build-push-action@v7
-        with:
-          context: web
-          builder: nm
-          platforms: linux/arm64,linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE_BASE }}/web:${{ steps.meta.outputs.tag }}
-          cache-from: ${{ steps.ant.outputs.cache-from }}
-          cache-to: ${{ steps.ant.outputs.cache-to }}
+          tag="sha-${GITHUB_SHA::7}"
+          refs=()
+          for d in *; do refs+=("$IMAGE@sha256:$d"); done
+          docker buildx imagetools create -t "$IMAGE:$tag" "${refs[@]}"
+          docker buildx imagetools inspect "$IMAGE:$tag"
