@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   test:
-    runs-on: arc-azrtydxb
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # Kuvryn Ant OIDC (azrtydxb/ant-setup-action)
@@ -40,7 +40,7 @@ jobs:
         run: go test -race ./...
 
   lint:
-    runs-on: arc-azrtydxb
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # Kuvryn Ant OIDC (azrtydxb/ant-setup-action)
@@ -52,7 +52,7 @@ jobs:
       - run: golangci-lint run ./...
 
   helm-lint:
-    runs-on: arc-azrtydxb
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: azure/setup-helm@v4
@@ -61,7 +61,7 @@ jobs:
       - run: helm lint deploy/helm/novamail
 
   node-check:
-    runs-on: arc-azrtydxb
+    runs-on: ubuntu-latest
     permissions:
       contents: read
       id-token: write # Kuvryn Ant OIDC (azrtydxb/ant-setup-action)
@@ -83,7 +83,7 @@ jobs:
   all-checks-passed:
     needs: [test, lint, helm-lint, node-check]
     if: always()
-    runs-on: arc-azrtydxb
+    runs-on: ubuntu-latest
     steps:
       - name: Verify
         run: |
