@@ -11,8 +11,8 @@ env:
   ANT_REGISTRY: ant.azrty.com/oci-hosted
 
 jobs:
-  # One build per architecture on a runner of that architecture (ubuntu-latest = arm64,
-  # ubuntu-latest-amd64 = amd64) with the runner pod's BuildKit sidecar, pushed by digest
+  # One build per architecture on a runner of that architecture (ubuntu-24.04-arm = arm64,
+  # ubuntu-latest = amd64), natively, pushed by digest
   # to ghcr and Kuvryn Ant; the image job below joins the digests under the tags.
   image-build:
     runs-on: ${{ matrix.arch == 'amd64' && 'ubuntu-latest' || 'ubuntu-24.04-arm' }}

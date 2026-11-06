@@ -28,7 +28,7 @@ env:
 
 jobs:
   # One build per image and architecture, each on a runner of its own architecture
-  # (ubuntu-latest = arm64, ubuntu-latest-amd64 = amd64) natively (no emulation), and each with its own Ant cache ref (<branch>-<image>-<arch>): two
+  # (ubuntu-24.04-arm = arm64, ubuntu-latest = amd64), natively (no emulation), and each with its own Ant cache ref (<branch>-<image>-<arch>): two
   # platforms writing one cache ref overwrite each other. The image is pushed by
   # digest; the manifest job below joins the two digests under the usual tag.
   build:
