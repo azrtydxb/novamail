@@ -10,7 +10,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 ## Cluster/CI facts (kw)
 - Repo: `github.com/azrtydxb/novamail`. kubeconfig context `kw` (ARM64 k3s v1.34.4).
 - Runners: ARC scale set `arc-azrtydxb` (compute, test, deploy and image push).
-- Images: build native per-arch, push to `ghcr.io/azrtydxb/novamail`; arm64 buildcache → `192.168.10.131:5000/buildcache/...`, amd64 via remote BuildKit. Mirror release images to Zot `192.168.10.131:5000`.
+- Images: build native per-arch, push to Kuvryn Ant `ant.azrty.com/oci-hosted/azrtydxb/novamail` (kw pulls `ant.kw.watteel.lab/oci-hosted/...`); build caches live on Ant too.
 - Deploy: **Helm `upgrade --install` from an ARC runner** (in-cluster) against namespace `novamail`.
 - Ingress: ingress-nginx, host `*.kw.local`, `externalTrafficPolicy=Cluster`, cert-manager `cluster-ca` ClusterIssuer.
 - Storage: Longhorn — `longhorn` (default, 3-replica), `longhorn-single`. **Body store = Longhorn RWX PVC** (or NAS NFS `192.168.10.253`).
@@ -25,7 +25,7 @@ Legend: `[ ]` todo · `[~]` in progress · `[x]` done
 - [ ] `deploy/helm/novamail` chart: Deployment, Service, Ingress (`ingress.kw.local`), probes, RWX PVC for body store, ServiceMonitor, values for image tag/registry.
 - [ ] `.github/workflows/ci.yml` — `go vet` + `golangci-lint` + `go test -race` on `arc-azrtydxb`; build image on push to main.
 - [ ] `.github/workflows/pr-checks.yml` — lint/test/`all-checks-passed` gate.
-- [ ] `.github/workflows/release.yml` — per-arch build → manifest → ghcr → mirror to Zot → helm package/push.
+- [ ] `.github/workflows/release.yml` — per-arch build → manifest → ghcr + Kuvryn Ant → helm package/push.
 - [ ] `.github/workflows/deploy.yml` — `helm upgrade --install` to `novamail` ns from ARC runner (in-cluster RBAC: ServiceAccount + Role/RoleBinding).
 - [ ] Verify: green pipeline + `https://ingress.kw.local/healthz` reachable on kw.
 
